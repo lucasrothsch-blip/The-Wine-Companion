@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wine Companion | Wine Load Information</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero__content">
+        <p class="eyebrow">The Wine Companion</p>
+        <h1>Wine Load Information</h1>
+        <p class="subtitle">
+          First UI mockup for tracking incoming wine loads, estimated arrival,
+          source details, and quality readiness at a glance.
+        </p>
+      </div>
+      <button class="primary-action">Create New Load</button>
+    </header>
+
+    <main class="layout">
+      <section class="panel panel--summary" aria-labelledby="summary-title">
+        <h2 id="summary-title">Current Load Summary</h2>
+        <div class="summary-grid">
+          <article class="summary-card">
+            <h3>Total Cases</h3>
+            <p class="value">12,480</p>
+            <p class="meta">Across 6 active shipments</p>
+          </article>
+          <article class="summary-card">
+            <h3>Next Arrival</h3>
+            <p class="value">Apr 09, 2026</p>
+            <p class="meta">07:30 AM — Napa Dock 2</p>
+          </article>
+          <article class="summary-card">
+            <h3>Inspection Status</h3>
+            <p class="value">93% Ready</p>
+            <p class="meta">2 lots pending lab review</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="table-title">
+        <div class="panel__header">
+          <h2 id="table-title">Incoming Loads</h2>
+          <button class="ghost-action">Export</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Load ID</th>
+                <th>Winery</th>
+                <th>Varietal</th>
+                <th>Cases</th>
+                <th>ETA</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>WL-4921</td>
+                <td>Silver Ridge</td>
+                <td>Cabernet Sauvignon</td>
+                <td>3,200</td>
+                <td>Apr 09</td>
+                <td><span class="chip chip--inbound">Inbound</span></td>
+              </tr>
+              <tr>
+                <td>WL-4922</td>
+                <td>Oakline Estates</td>
+                <td>Pinot Noir</td>
+                <td>1,850</td>
+                <td>Apr 10</td>
+                <td><span class="chip chip--inspection">Inspection</span></td>
+              </tr>
+              <tr>
+                <td>WL-4925</td>
+                <td>Valley Crest</td>
+                <td>Sauvignon Blanc</td>
+                <td>2,700</td>
+                <td>Apr 11</td>
+                <td><span class="chip chip--ready">Ready</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel panel--side" aria-labelledby="timeline-title">
+        <h2 id="timeline-title">Load Timeline</h2>
+        <ol class="timeline">
+          <li>
+            <p class="timeline__date">Apr 08</p>
+            <p>Container sanitized and pre-cooled.</p>
+          </li>
+          <li>
+            <p class="timeline__date">Apr 09</p>
+            <p>Silver Ridge load arriving at Dock 2.</p>
+          </li>
+          <li>
+            <p class="timeline__date">Apr 10</p>
+            <p>Oakline Estates quality inspection scheduled.</p>
+          </li>
+          <li>
+            <p class="timeline__date">Apr 11</p>
+            <p>Valley Crest lot staged for warehouse release.</p>
+          </li>
+        </ol>
+      </section>
+    </main>
+  </body>
+</html>
