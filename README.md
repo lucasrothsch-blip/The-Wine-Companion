@@ -88,12 +88,15 @@ Validaciones con Zod en frontend y backend:
 
 Para validar el bloque de **Stock + Movimientos**:
 
-1. UI: `http://localhost:3000/movements`
+1. UI ficha de vino: `http://localhost:3000/wines/:id`
+   - validar información completa del vino (datos, costos, stock y estado)
+   - validar historial de movimientos del vino
+2. UI movimientos: `http://localhost:3000/movements`
    - probar `ingreso` sin `costo_unitario` (debe mostrar error por campo)
    - probar `venta` sin `precio_unitario` (debe mostrar error por campo)
    - probar `ajuste` sin `notas` (debe mostrar error por campo)
    - probar `ajuste` con `ajuste_modo = decremento` para verificar rebaja de stock
-2. Dashboard: `http://localhost:3000`
+3. Dashboard: `http://localhost:3000`
    - verificar impacto en métricas y alertas luego de movimientos
-3. API directa (opcional): `POST /api/movements`
+4. API directa (opcional): `POST /api/movements`
    - confirmar `fieldErrors` en respuestas 400 y control de stock negativo

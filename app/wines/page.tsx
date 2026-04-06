@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { wineSchema } from "@/lib/validations";
 import { ClientTable } from "@/app/components/ClientTable";
@@ -75,6 +76,21 @@ export default function WinesPage() {
         <button className="bg-slate-900 text-white md:col-span-4">Guardar vino</button>
       </form>
       {error && <p className="text-sm text-red-600">{error}</p>}
+      <article className="rounded-lg border bg-white p-4">
+        <h2 className="mb-2 text-lg font-semibold">Fichas rápidas</h2>
+        <ul className="space-y-2 text-sm">
+          {rows.map((row) => (
+            <li className="flex items-center justify-between rounded border border-slate-200 px-3 py-2" key={String(row.id)}>
+              <span>
+                <strong>{String(row.nombre)}</strong> · {String(row.cepa)} · stock {String(row.stock_actual)}
+              </span>
+              <Link className="text-blue-700 underline" href={`/wines/${row.id}`}>
+                Ver ficha
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </article>
       <ClientTable rows={rows} title="Listado de vinos" />
     </section>
   );
