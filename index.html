@@ -4729,6 +4729,324 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════
+     PAGE: IMPORTAR CARTA (CSV)
+  ═══════════════════════════════════════════════════════════════════ */
+  function pageImportWines() {
+    const types = DB.getWineTypes();
+
+    // ── CSV parser (maneja comillas y comas dentro de campos) ────
+    const parseCSV = text => {
+      const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+      const nonEmpty = lines.filter(l => l.trim());
+      if (nonEmpty.length < 2) return [];
+
+      const parseLine = line => {
+        const res = []; let cur = '', inQ = false;
+        for (const ch of line) {
+          if (ch === '"') { inQ = !inQ; }
+          else if (ch === ',' && !inQ) { res.push(cur.trim()); cur = ''; }
+          else { cur += ch; }
+        }
+        res.push(cur.trim());
+        return res.map(v => v.replace(/^"|"$/g, '').trim());
+      };
+
+      const rawH = parseLine(nonEmpty[0].replace(/^﻿/, '')); // strip BOM
+      const H    = rawH.map(h => h.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '_'));
+
+      const find = (...keys) => H.findIndex(h => keys.some(k => h.includes(k)));
+      const cols = {
+        nombre: find('nombre','name','vino','wine'),
+        anada:  find('anada','a_ada','vintage','year','a_o'),
+        tipo:   find('tipo','type','varietal','categoria'),
+        precio: find('precio_carta','precio','price','carta'),
+        costo:  find('costo','cost'),
+        stock:  find('stock','cantidad','quantity','botellas','units'),
+        prov:   find('proveedor','provider','bodega','supplier','marca'),
+      };
+
+      return nonEmpty.slice(1).map((line, i) => {
+        const v = parseLine(line);
+        const g = k => cols[k] >= 0 ? (v[cols[k]] || '') : '';
+        return {
+          rowNum:    i + 2,
+          nombre:    g('nombre').trim(),
+          añada:     g('anada').trim() || 'S/A',
+          tipo:      g('tipo').trim(),
+          precio:    parseFloat(g('precio').replace(',', '.')) || 0,
+          costo:     parseFloat(g('costo').replace(',', '.')) || 0,
+          stock:     Math.max(0, parseInt(g('stock')) || 0),
+          proveedor: g('prov').trim(),
+        };
+      }).filter(r => r.nombre);
+    };
+
+    // ── Validación de cada fila ──────────────────────────────────
+    const validateRow = row => {
+      const errors = [], warns = [];
+      if (!row.nombre) errors.push('Sin nombre');
+      if (row.tipo && !types.includes(row.tipo)) warns.push(`Tipo "${row.tipo}" no reconocido — se usará "${types[0] || 'Tintos'}"`);
+      if (!row.tipo)   warns.push('Sin tipo de vino');
+      if (row.precio === 0) warns.push('Precio de carta $0');
+      const isDup = DB.getWines().some(w =>
+        normalize(w.nombre) === normalize(row.nombre) && String(w.añada) === String(row.añada)
+      );
+      if (isDup) warns.push('Ya existe en el sistema');
+      return { errors, warns, isDup };
+    };
+
+    const templateCSV =
+      'nombre,añada,tipo,precio_carta,costo,stock,proveedor\n' +
+      'Achaval Ferrer Malbec,2022,Tintos,4500,1800,6,Achaval Ferrer\n' +
+      'Zuccardi Valle Malbec,2021,Tintos,8500,3200,3,Zuccardi\n' +
+      'Catena Zapata White Bones,2023,Blancos,3200,1100,12,\n' +
+      'Luigi Bosca Brut Nature,2022,Burbujas,2900,950,8,Luigi Bosca\n' +
+      'Clos de los Siete,2021,Tintos,5800,2200,4,';
+
+    return {
+      html: `
+        <div class="screen">
+          <header class="topbar">
+            <button class="topbar__back" id="btn-back">←</button>
+            <span class="topbar__title">Importar carta</span>
+            <span></span>
+          </header>
+          <div class="content">
+
+            <!-- PASO 1: UPLOAD -->
+            <div id="step-upload">
+              <div class="card" style="margin-bottom:16px">
+                <div style="font-size:14px;font-weight:600;margin-bottom:8px">¿Cómo funciona?</div>
+                <div style="font-size:13px;color:var(--text-2);line-height:1.6;margin-bottom:12px">
+                  Exportá tu carta de vinos desde Excel o Google Sheets como <strong style="color:var(--gold)">CSV</strong>, subí el archivo y la app crea todos los vinos de una.
+                </div>
+                <div style="background:var(--surface-3);border-radius:var(--radius-sm);padding:10px;font-size:11px;font-family:monospace;color:var(--gold);overflow-x:auto;white-space:nowrap">
+                  nombre, añada, tipo, precio_carta, costo, stock, proveedor
+                </div>
+                <div style="margin-top:10px;font-size:12px;color:var(--text-muted)">
+                  Solo <strong>nombre</strong> es obligatorio. Tipos válidos: <em>${types.join(', ')}</em>.
+                </div>
+              </div>
+
+              <button class="btn btn--outline btn--full" id="btn-template" style="margin-bottom:16px">
+                ⬇ Descargar planilla de ejemplo (.csv)
+              </button>
+
+              <div id="drop-zone" style="border:2px dashed var(--border-light);border-radius:var(--radius-lg);padding:36px 16px;text-align:center;transition:border-color .2s">
+                <div style="font-size:40px;margin-bottom:8px">📄</div>
+                <div style="font-size:14px;color:var(--text-2);margin-bottom:4px">Arrastrá tu CSV aquí</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:16px">o hacé click para elegir</div>
+                <label class="btn btn--primary" style="cursor:pointer;display:inline-block">
+                  Elegir archivo
+                  <input type="file" id="inp-csv" accept=".csv,text/csv,text/plain" style="display:none">
+                </label>
+                <div id="file-name" style="margin-top:10px;font-size:12px;color:var(--gold)"></div>
+              </div>
+            </div>
+
+            <!-- PASO 2: PREVIEW -->
+            <div id="step-preview" style="display:none">
+              <div id="preview-summary" style="margin-bottom:12px"></div>
+              <div id="preview-dup-opts" style="margin-bottom:12px"></div>
+              <div id="preview-list" style="margin-bottom:16px"></div>
+              <div style="display:flex;gap:8px;position:sticky;bottom:0;background:var(--bg);padding:12px 0">
+                <button class="btn btn--outline" id="btn-back-upload" style="flex:1">← Volver</button>
+                <button class="btn btn--primary" id="btn-confirm-import" style="flex:2">Importar →</button>
+              </div>
+            </div>
+
+          </div>
+        </div>`,
+
+      bind() {
+        document.getElementById('btn-back').onclick = () => Router.back();
+
+        document.getElementById('btn-template').onclick = () => {
+          const a = document.createElement('a');
+          a.href     = 'data:text/csv;charset=utf-8,' + encodeURIComponent('﻿' + templateCSV);
+          a.download = 'plantilla-wine-companion.csv';
+          a.click();
+          Toast.info('Abrí el archivo en Excel o Google Sheets, completá tus vinos y exportá como CSV');
+        };
+
+        // ── Drag & drop ──────────────────────────────────────────
+        const dropZone = document.getElementById('drop-zone');
+        dropZone.ondragover = e => { e.preventDefault(); dropZone.style.borderColor = 'var(--gold)'; };
+        dropZone.ondragleave = () => { dropZone.style.borderColor = ''; };
+        dropZone.ondrop = e => {
+          e.preventDefault();
+          dropZone.style.borderColor = '';
+          const file = e.dataTransfer.files[0];
+          if (file) processFile(file);
+        };
+
+        // ── File input ───────────────────────────────────────────
+        document.getElementById('inp-csv').onchange = function() {
+          if (this.files[0]) processFile(this.files[0]);
+        };
+
+        document.getElementById('btn-back-upload').onclick = () => {
+          document.getElementById('step-preview').style.display = 'none';
+          document.getElementById('step-upload').style.display = '';
+        };
+
+        // ── Procesar archivo ─────────────────────────────────────
+        const processFile = file => {
+          document.getElementById('file-name').textContent = '⏳ Leyendo ' + file.name + '…';
+          const reader = new FileReader();
+          reader.onload = e => {
+            try {
+              const rows = parseCSV(e.target.result);
+              if (!rows.length) { Toast.error('El archivo está vacío o el formato no es correcto'); return; }
+              showPreview(rows, file.name);
+            } catch (err) {
+              Toast.error('Error al leer el archivo');
+            }
+          };
+          reader.readAsText(file, 'UTF-8');
+        };
+
+        // ── Mostrar preview ──────────────────────────────────────
+        const showPreview = (rows, fileName) => {
+          const validated = rows.map(r => ({ ...r, ...validateRow(r) }));
+          const ok      = validated.filter(r => !r.errors.length && !r.warns.length);
+          const warns   = validated.filter(r => !r.errors.length && r.warns.length);
+          const errors  = validated.filter(r => r.errors.length);
+          const dups    = validated.filter(r => r.isDup);
+          const importable = validated.filter(r => !r.errors.length);
+
+          document.getElementById('step-upload').style.display = 'none';
+          document.getElementById('step-preview').style.display = '';
+
+          document.getElementById('preview-summary').innerHTML = `
+            <div class="card">
+              <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px">${fileName}</div>
+              <div style="font-size:16px;font-weight:700;margin-bottom:12px">${rows.length} vinos detectados</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px">
+                ${ok.length     ? `<span style="background:var(--success-bg);color:var(--success);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600">✓ ${ok.length} listos</span>` : ''}
+                ${warns.length  ? `<span style="background:#2A1800;color:var(--warning);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600">⚠ ${warns.length} con advertencias</span>` : ''}
+                ${dups.length   ? `<span style="background:var(--surface-3);color:var(--text-2);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600">🔁 ${dups.length} duplicados</span>` : ''}
+                ${errors.length ? `<span style="background:var(--error-bg);color:var(--error);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600">✗ ${errors.length} con error</span>` : ''}
+              </div>
+              ${errors.length ? `<div style="margin-top:10px;font-size:12px;color:var(--text-2)">Los ${errors.length} vinos con error se van a omitir automáticamente.</div>` : ''}
+            </div>`;
+
+          document.getElementById('preview-dup-opts').innerHTML = dups.length ? `
+            <div class="card">
+              <div style="font-size:13px;font-weight:600;margin-bottom:10px">🔁 ${dups.length} vino${dups.length !== 1 ? 's' : ''} ya existe${dups.length !== 1 ? 'n' : ''} en el sistema</div>
+              <label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;cursor:pointer">
+                <input type="radio" name="dup-opt" value="skip" checked style="margin-top:3px;accent-color:var(--primary)">
+                <div>
+                  <div style="font-size:13px;font-weight:600">Ignorar</div>
+                  <div style="font-size:12px;color:var(--text-2)">No toca los vinos que ya existen</div>
+                </div>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+                <input type="radio" name="dup-opt" value="update" style="margin-top:3px;accent-color:var(--primary)">
+                <div>
+                  <div style="font-size:13px;font-weight:600">Actualizar</div>
+                  <div style="font-size:12px;color:var(--text-2)">Sobreescribe precio, costo y stock con los valores del CSV</div>
+                </div>
+              </label>
+            </div>` : '';
+
+          document.getElementById('preview-list').innerHTML =
+            '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Vista previa' + (validated.length > 15 ? ` (primeros 15 de ${validated.length})` : '') + ':</div>' +
+            validated.slice(0, 15).map(r => {
+              const borderColor = r.errors.length ? 'var(--error)' : r.isDup ? 'var(--border-light)' : r.warns.length ? 'var(--warning)' : 'var(--border)';
+              const badgeHtml = r.errors.length
+                ? `<span style="font-size:10px;color:var(--error);background:var(--error-bg);padding:2px 7px;border-radius:20px">✗ Error</span>`
+                : r.isDup
+                  ? `<span style="font-size:10px;color:var(--text-2);background:var(--surface-3);padding:2px 7px;border-radius:20px">🔁 Dup.</span>`
+                  : r.warns.length
+                    ? `<span style="font-size:10px;color:var(--warning);background:#2A1800;padding:2px 7px;border-radius:20px">⚠ Aviso</span>`
+                    : `<span style="font-size:10px;color:var(--success);background:var(--success-bg);padding:2px 7px;border-radius:20px">✓ OK</span>`;
+              return `
+              <div style="border:1px solid ${borderColor};border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:6px;background:var(--surface-2)">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                  <div style="flex:1;min-width:0">
+                    <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                      ${escHtml(r.nombre)} <span style="color:var(--text-muted);font-weight:400">${r.añada}</span>
+                    </div>
+                    <div style="font-size:12px;color:var(--text-2);margin-top:2px">
+                      ${r.tipo || '<span style="color:var(--text-muted)">sin tipo</span>'} · $${r.precio.toLocaleString('es-AR')} · ${r.stock} bot.
+                      ${r.proveedor ? `· <span style="color:var(--text-muted)">${escHtml(r.proveedor)}</span>` : ''}
+                    </div>
+                  </div>
+                  ${badgeHtml}
+                </div>
+                ${[...r.errors, ...r.warns].length ? `<div style="font-size:11px;color:var(--text-muted);margin-top:5px;line-height:1.5">${[...r.errors, ...r.warns].join('<br>')}</div>` : ''}
+              </div>`;
+            }).join('') +
+            (validated.length > 15 ? `<div style="text-align:center;font-size:12px;color:var(--text-muted);padding:8px">… y ${validated.length - 15} vinos más</div>` : '');
+
+          const btnConfirm = document.getElementById('btn-confirm-import');
+          btnConfirm.textContent = `Importar ${importable.length} vino${importable.length !== 1 ? 's' : ''} →`;
+          btnConfirm.disabled = importable.length === 0;
+
+          btnConfirm.onclick = () => {
+            const dupOpt = document.querySelector('input[name="dup-opt"]:checked')?.value || 'skip';
+            let imported = 0, updated = 0, skipped = 0;
+
+            importable.forEach(r => {
+              // Resolver proveedor
+              let proveedorId = null;
+              if (r.proveedor) {
+                const found = DB.getProveedores().find(p =>
+                  p.activo !== false &&
+                  normalize(p.nombre_fantasia || p.nombre) === normalize(r.proveedor)
+                );
+                proveedorId = found
+                  ? found.id
+                  : DB.addProveedor({ id: uid(), nombre: r.proveedor, activo: true, creadoEn: now(), creadoPor: Auth.user.id }).id;
+              }
+
+              if (r.isDup) {
+                if (dupOpt === 'skip') { skipped++; return; }
+                const existing = DB.getWines().find(w =>
+                  normalize(w.nombre) === normalize(r.nombre) && String(w.añada) === String(r.añada)
+                );
+                if (existing) {
+                  const upd = {};
+                  if (r.precio > 0) upd.precio_carta = r.precio;
+                  if (r.costo  > 0) upd.costo = r.costo;
+                  if (proveedorId)  upd.proveedorId = proveedorId;
+                  DB.updateWine(existing.id, upd);
+                  if (r.stock > 0 && r.stock !== existing.stock_actual) {
+                    DB.updateWine(existing.id, { stock_actual: r.stock });
+                    DB.addMovement({ wineId: existing.id, tipo: 'ajuste', cantidad: Math.abs(r.stock - (existing.stock_actual || 0)), userId: Auth.user.id, userName: Auth.user.nombre, nota: 'Ajuste por importación CSV', createdAt: now() });
+                  }
+                  updated++;
+                }
+                return;
+              }
+
+              const tipoFinal = types.includes(r.tipo) ? r.tipo : (types[0] || 'Tintos');
+              const newWine = DB.addWine({
+                id: uid(), nombre: r.nombre, añada: r.añada, tipo: tipoFinal,
+                costo: r.costo, precio_carta: r.precio,
+                stock_actual: r.stock, proveedorId,
+                activo: true, createdAt: now(), createdBy: Auth.user.id,
+              });
+              if (r.stock > 0) {
+                DB.addMovement({ wineId: newWine.id, tipo: 'entrada_inicial', cantidad: r.stock, userId: Auth.user.id, userName: Auth.user.nombre, nota: 'Stock inicial — importación CSV', createdAt: now() });
+              }
+              imported++;
+            });
+
+            const parts = [];
+            if (imported) parts.push(`${imported} importado${imported !== 1 ? 's' : ''}`);
+            if (updated)  parts.push(`${updated} actualizado${updated !== 1 ? 's' : ''}`);
+            if (skipped)  parts.push(`${skipped} omitido${skipped !== 1 ? 's' : ''}`);
+            Toast.success(parts.join(' · '));
+            Router.replace('stock');
+          };
+        };
+      },
+    };
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
      APP
   ═══════════════════════════════════════════════════════════════════ */
   const App = {
@@ -4760,6 +5078,7 @@
         'user-profile':      pageUserProfile,
         team:                pageTeam,
         'user-form':         pageUserForm,
+        'import-wines':      pageImportWines,
       };
       const fn   = pages[Router.current] || pageDashboard;
       const view = fn();
