@@ -1584,12 +1584,16 @@
      PAGE: DASHBOARD
   ═══════════════════════════════════════════════════════════════════ */
   function pageDashboard() {
-    const u      = Auth.user;
-    const wines  = DB.getWines().filter(w => w.activo !== false);
-    const setup  = DB.getSetup();
-    const hoy    = new Date().toDateString();
-    const infHoy = DB.getInformes().filter(i => new Date(i.fecha).toDateString() === hoy && i.estado === 'confirmado').length;
-    const inProg = DB.getInformeEnProgreso();
+    const u         = Auth.user;
+    const wines     = DB.getWines().filter(w => w.activo !== false);
+    const setup     = DB.getSetup();
+    const hoy       = new Date().toDateString();
+    const infHoy    = DB.getInformes().filter(i => new Date(i.fecha).toDateString() === hoy && i.estado === 'confirmado').length;
+    const inProg    = DB.getInformeEnProgreso();
+    const ingProg   = DB.getIngresoEnProgreso();
+    const startMes  = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const confMes   = DB.getInformes().filter(i => i.estado === 'confirmado' && new Date(i.confirmedAt || i.fecha) >= startMes);
+    const factMesDash = confMes.reduce((s, inf) => s + inf.items.reduce((a, i) => a + ((i.vinoPrecio||0)*i.cantidad), 0), 0);
 
     return {
       html: `
@@ -1617,31 +1621,46 @@
                 <span class="module-card__name">Ventas</span>
                 <span class="module-card__count">${inProg ? '⚡ En progreso' : infHoy ? `${infHoy} hoy` : 'Nuevo informe'}</span>
               </button>
+              <button class="module-card module-card--active" data-go="ingresos">
+                <span class="module-card__icon">📦</span>
+                <span class="module-card__name">Ingresar mercadería</span>
+                <span class="module-card__count">${ingProg ? '⚡ En progreso' : 'Nuevo ingreso'}</span>
+              </button>
               ${Auth.can('manage_stock') ? `
               <button class="module-card module-card--active" data-go="proveedores">
                 <span class="module-card__icon">🏭</span>
                 <span class="module-card__name">Proveedores</span>
                 <span class="module-card__count">${DB.getProveedores().filter(p => p.activo !== false).length} activos</span>
-              </button>` : `
-              <button class="module-card module-card--soon" disabled>
-                <span class="module-card__icon">💰</span>
-                <span class="module-card__name">Finanzas</span>
-                <span class="module-card__soon">Próximamente</span>
-              </button>`}
-              <button class="module-card module-card--soon" disabled>
-                <span class="module-card__icon">📖</span>
-                <span class="module-card__name">Tu Menú</span>
-                <span class="module-card__soon">Próximamente</span>
-              </button>
+              </button>` : ''}
+              ${Auth.can('view_finances') ? `
+              <button class="module-card module-card--active" data-go="ventas-reportes">
+                <span class="module-card__icon">📊</span>
+                <span class="module-card__name">Reportes</span>
+                <span class="module-card__count">${factMesDash > 0 ? fmtCurrency(factMesDash) + ' este mes' : 'Ver estadísticas'}</span>
+              </button>` : ''}
+              ${Auth.can('settings') ? `
+              <button class="module-card module-card--active" data-go="settings">
+                <span class="module-card__icon">⚙️</span>
+                <span class="module-card__name">Configuración</span>
+                <span class="module-card__count">Usuarios · Ajustes</span>
+              </button>` : ''}
             </div>
           </div>
         </div>`,
       bind() {
         document.getElementById('btn-logout').onclick = () => { Auth.logout(); Router.replace('login'); };
-        document.querySelector('[data-go="stock"]').onclick  = () => Router.go('stock');
-        document.querySelector('[data-go="ventas"]').onclick = () => Router.go('ventas');
-        const btnProvs = document.querySelector('[data-go="proveedores"]');
-        if (btnProvs) btnProvs.onclick = () => Router.go('proveedores');
+        const goMap = {
+          'stock':          'stock',
+          'ventas':         'ventas',
+          'ingresos':       'ingresos',
+          'proveedores':    'proveedores',
+          'ventas-reportes':'ventas-reportes',
+          'settings':       'settings',
+        };
+        document.querySelectorAll('[data-go]').forEach(btn => {
+          const dest = goMap[btn.dataset.go];
+          if (dest) btn.onclick = () => Router.go(dest);
+        });
       },
     };
   }
@@ -1830,12 +1849,18 @@
               <!-- PROVEEDOR (opcional) -->
               <div class="field" id="f-proveedor">
                 <label class="field__label">Proveedor habitual <span style="color:var(--text-muted);font-weight:400;text-transform:none">(opcional)</span></label>
-                <select class="field__input field__select" id="inp-proveedor">
-                  <option value="">Sin proveedor asignado</option>
-                  ${DB.getProveedores().filter(p => p.activo !== false).map(p =>
-                    `<option value="${p.id}"${v.proveedorId === p.id ? ' selected' : ''}>${escHtml(p.nombre_fantasia || p.nombre)}</option>`
-                  ).join('')}
-                </select>
+                ${(() => {
+                  const provActual = v.proveedorId ? DB.getProveedorById(v.proveedorId) : null;
+                  return `
+                  <div style="position:relative">
+                    <input class="field__input" id="inp-proveedor-display" type="text"
+                      value="${provActual ? escHtml(provActual.nombre_fantasia || provActual.nombre) : ''}"
+                      placeholder="Buscar proveedor…" autocomplete="off">
+                    <input type="hidden" id="inp-proveedor" value="${v.proveedorId || ''}">
+                    <div class="autocomplete-list hidden" id="prov-ac"></div>
+                  </div>
+                  <button type="button" id="btn-clear-prov" style="display:${provActual?'':'none'};font-size:11px;color:var(--text-muted);background:none;border:none;cursor:pointer;padding:2px 0">✕ Quitar proveedor</button>`;
+                })()}
                 <button type="button" id="btn-nuevo-prov" style="margin-top:6px;font-size:12px;color:var(--gold);background:none;border:1px solid var(--border);border-radius:var(--radius-sm);padding:5px 10px;cursor:pointer;width:100%">
                   + Crear proveedor nuevo
                 </button>
@@ -1935,6 +1960,47 @@
       bind() {
         document.getElementById('btn-back').onclick = () => Router.back();
 
+        // ── Autocomplete proveedor ────────────────────────────────
+        const dispInput  = document.getElementById('inp-proveedor-display');
+        const hiddenProv = document.getElementById('inp-proveedor');
+        const provAC     = document.getElementById('prov-ac');
+        const btnClrProv = document.getElementById('btn-clear-prov');
+
+        const setProveedor = (id, label) => {
+          hiddenProv.value = id;
+          dispInput.value  = label;
+          provAC.classList.add('hidden');
+          btnClrProv.style.display = id ? '' : 'none';
+        };
+
+        btnClrProv.onclick = () => setProveedor('', '');
+
+        dispInput.oninput = () => {
+          const q = normalize(dispInput.value);
+          hiddenProv.value = '';
+          btnClrProv.style.display = 'none';
+          if (!q) { provAC.classList.add('hidden'); return; }
+          const matches = DB.getProveedores().filter(p =>
+            p.activo !== false &&
+            (normalize(p.nombre_fantasia || '').includes(q) || normalize(p.nombre).includes(q))
+          ).slice(0, 6);
+          if (!matches.length) { provAC.classList.add('hidden'); return; }
+          provAC.innerHTML = matches.map(p =>
+            `<div class="ac-item" data-id="${p.id}" data-label="${escHtml(p.nombre_fantasia || p.nombre)}">
+               ${escHtml(p.nombre_fantasia || p.nombre)}
+               ${p.nombre_fantasia ? `<span style="color:var(--text-muted);font-size:11px"> · ${escHtml(p.nombre)}</span>` : ''}
+             </div>`
+          ).join('');
+          provAC.classList.remove('hidden');
+          provAC.querySelectorAll('.ac-item').forEach(item => {
+            item.onmousedown = e => {
+              e.preventDefault();
+              setProveedor(item.dataset.id, item.dataset.label);
+            };
+          });
+        };
+        dispInput.onblur = () => setTimeout(() => provAC.classList.add('hidden'), 150);
+
         // ── Crear proveedor inline ────────────────────────────────
         document.getElementById('btn-nuevo-prov').onclick = () => {
           document.getElementById('nuevo-prov-panel').style.display = '';
@@ -1961,13 +2027,8 @@
             creadoEn:        now(),
             creadoPor:       Auth.user.id,
           });
-          const sel = document.getElementById('inp-proveedor');
           const label = nuevo.nombre_fantasia || nuevo.nombre;
-          const opt = document.createElement('option');
-          opt.value = nuevo.id;
-          opt.textContent = label;
-          opt.selected = true;
-          sel.appendChild(opt);
+          setProveedor(nuevo.id, label);
           document.getElementById('nuevo-prov-panel').style.display = 'none';
           document.getElementById('btn-nuevo-prov').style.display = '';
           Toast.success(`"${label}" creado y asignado`);
@@ -2368,11 +2429,11 @@
                 <span class="ventas-hub__arrow">→</span>
               </button>
 
-              <button class="ventas-hub__card" id="btn-reportes">
-                <div class="ventas-hub__icon">📊</div>
+              <button class="ventas-hub__card" id="btn-historial-mes">
+                <div class="ventas-hub__icon">📅</div>
                 <div class="ventas-hub__info">
-                  <div class="ventas-hub__title">Reportes</div>
-                  <div class="ventas-hub__sub">${botsMes} bot. este mes${factMes > 0 ? ` · ${fmtCurrency(factMes)}` : ''} · ${desMes.length} turno${desMes.length !== 1 ? 's' : ''}</div>
+                  <div class="ventas-hub__title">Este mes</div>
+                  <div class="ventas-hub__sub">${botsMes} bot.${factMes > 0 ? ` · ${fmtCurrency(factMes)}` : ''} · ${desMes.length} turno${desMes.length !== 1 ? 's' : ''}</div>
                 </div>
                 <span class="ventas-hub__arrow">→</span>
               </button>
@@ -2400,8 +2461,8 @@
           };
         }
 
-        document.getElementById('btn-historial').onclick = () => Router.go('ventas-historial');
-        document.getElementById('btn-reportes').onclick  = () => Router.go('ventas-reportes');
+        document.getElementById('btn-historial').onclick     = () => Router.go('ventas-historial');
+        document.getElementById('btn-historial-mes').onclick = () => Router.go('ventas-historial');
       },
     };
   }
@@ -4350,6 +4411,324 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════
+     PAGE: SETTINGS HUB
+  ═══════════════════════════════════════════════════════════════════ */
+  function pageSettings() {
+    const setup = DB.getSetup();
+    const STOCK_BAJO = setup.stockBajo ?? 3;
+    const items = [
+      { id: 'team',       icon: '👥', title: 'Equipo y usuarios',       sub: `${DB.getUsers().length} usuarios registrados`,           perm: 'manage_users' },
+      { id: 'wine-types', icon: '🍷', title: 'Tipos de vino',           sub: `${DB.getWineTypes().length} tipos configurados`,          perm: 'settings' },
+      { id: 'stock-bajo', icon: '⚠️', title: 'Umbral de stock bajo',    sub: `Actualmente: ${STOCK_BAJO} botellas`,                     perm: 'settings' },
+      { id: 'restaurant', icon: '🏠', title: 'Datos del restaurante',   sub: setup.restaurantName || '—',                               perm: 'settings' },
+      { id: 'export',     icon: '💾', title: 'Exportar datos',          sub: 'Backup completo en JSON',                                 perm: 'settings' },
+      { id: 'import',     icon: '📥', title: 'Importar carta (CSV)',     sub: 'Carga masiva de vinos desde planilla',                    perm: 'settings' },
+      { id: 'turnos',     icon: '🕐', title: 'Configurar turnos',        sub: 'Próximamente',                                            perm: 'settings', soon: true },
+      { id: 'notif',      icon: '🔔', title: 'Alertas de stock',        sub: 'Próximamente',                                            perm: 'settings', soon: true },
+      { id: 'carta',      icon: '📖', title: 'Carta digital',           sub: 'Próximamente',                                            perm: 'settings', soon: true },
+      { id: 'backup',     icon: '🔄', title: 'Restaurar desde backup',  sub: 'Próximamente',                                            perm: 'settings', soon: true },
+    ].filter(it => Auth.can(it.perm));
+
+    return {
+      html: `
+        <div class="screen">
+          <header class="topbar">
+            <button class="topbar__back" id="btn-back">←</button>
+            <span class="topbar__title">Configuración</span>
+            <span></span>
+          </header>
+          <div class="content">
+            <div class="dashboard-greeting" style="cursor:pointer" id="btn-my-profile">
+              <span class="greeting-avatar" style="background:${Auth.user.color || roleColor(Auth.user.roles)}">${Auth.user.nombre.charAt(0).toUpperCase()}</span>
+              <div style="flex:1">
+                <p class="greeting-name" style="margin:0">${Auth.user.nombre}</p>
+                <p class="greeting-roles" style="margin:0">${Auth.user.roles.map(roleLabel).join(' · ')}</p>
+              </div>
+              <span style="color:var(--text-muted)">→</span>
+            </div>
+
+            <div id="stock-bajo-inline" style="display:none;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px">
+              <div style="font-size:13px;margin-bottom:10px">Umbral de "stock bajo" (botellas):</div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <input type="number" id="inp-sb" value="${STOCK_BAJO}" min="0" max="99" inputmode="numeric"
+                  style="width:64px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:6px 10px;font-size:16px;text-align:center">
+                <span style="color:var(--text-2);font-size:13px">botellas</span>
+                <button class="btn btn--primary btn--sm" id="btn-sb-save" style="margin-left:auto">Guardar</button>
+              </div>
+            </div>
+
+            ${items.map(it => `
+            <button class="ventas-hub__card${it.soon ? ' module-card--soon' : ''}" data-setting="${it.id}" style="width:100%;margin-bottom:8px;${it.soon ? 'opacity:.5;cursor:default' : ''}">
+              <div class="ventas-hub__icon" style="font-size:20px">${it.icon}</div>
+              <div class="ventas-hub__info">
+                <div class="ventas-hub__title">${it.title}</div>
+                <div class="ventas-hub__sub">${it.sub}</div>
+              </div>
+              ${it.soon ? '' : '<span class="ventas-hub__arrow">→</span>'}
+            </button>`).join('')}
+          </div>
+        </div>`,
+      bind() {
+        document.getElementById('btn-back').onclick      = () => Router.back();
+        document.getElementById('btn-my-profile').onclick = () => Router.go('user-profile');
+
+        document.querySelectorAll('[data-setting]').forEach(btn => {
+          const id = btn.dataset.setting;
+          btn.onclick = () => {
+            if (id === 'team')       Router.go('team');
+            else if (id === 'wine-types') Router.go('wine-types');
+            else if (id === 'stock-bajo') {
+              const panel = document.getElementById('stock-bajo-inline');
+              panel.style.display = panel.style.display === 'none' ? '' : 'none';
+            }
+            else if (id === 'restaurant') Router.go('restaurant-settings');
+            else if (id === 'export') {
+              const data = JSON.stringify({
+                setup:      DB.getSetup(),
+                users:      DB.getUsers(),
+                wines:      DB.getWines(),
+                types:      DB.getWineTypes(),
+                movements:  DB._get('twc_movements'),
+                informes:   DB.getInformes(),
+                proveedores:DB.getProveedores(),
+                ingresos:   DB.getIngresos(),
+                exportedAt: now(),
+              }, null, 2);
+              const a = document.createElement('a');
+              a.href = 'data:application/json,' + encodeURIComponent(data);
+              a.download = `wine-companion-backup-${new Date().toISOString().split('T')[0]}.json`;
+              a.click();
+              Toast.success('Backup descargado');
+            }
+            else if (id === 'import') Router.go('import-wines');
+          };
+        });
+
+        const btnSbSave = document.getElementById('btn-sb-save');
+        if (btnSbSave) {
+          btnSbSave.onclick = () => {
+            const val = parseInt(document.getElementById('inp-sb').value);
+            if (isNaN(val) || val < 0) { Toast.error('Valor inválido'); return; }
+            DB.updateSetup({ stockBajo: val });
+            Toast.success('Umbral actualizado');
+            document.getElementById('stock-bajo-inline').style.display = 'none';
+            App.render();
+          };
+        }
+      },
+    };
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     PAGE: USER PROFILE (perfil propio)
+  ═══════════════════════════════════════════════════════════════════ */
+  function pageUserProfile() {
+    const u = Auth.user;
+    return {
+      html: `
+        <div class="screen">
+          <header class="topbar">
+            <button class="topbar__back" id="btn-back">←</button>
+            <span class="topbar__title">Mi perfil</span>
+            <span></span>
+          </header>
+          <div class="content">
+            <div style="display:flex;flex-direction:column;align-items:center;padding:24px 0 20px">
+              <span class="greeting-avatar" style="width:72px;height:72px;font-size:28px;background:${u.color || roleColor(u.roles)}">${u.nombre.charAt(0).toUpperCase()}</span>
+              <div style="font-size:20px;font-weight:700;margin-top:12px">${escHtml(u.nombre)}</div>
+              <div style="margin-top:4px">${u.roles.map(r => `<span class="badge" style="background:${roleColor([r])}22;color:${roleColor([r])};border:1px solid ${roleColor([r])}44;margin:0 3px">${roleLabel(r)}</span>`).join('')}</div>
+            </div>
+
+            <div class="card" style="margin-bottom:16px">
+              <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px">Permisos activos</div>
+              ${[
+                ['edit_price',       '💰 Editar precios de carta'],
+                ['edit_cost',        '📋 Ver y editar costos'],
+                ['manage_users',     '👥 Gestionar equipo'],
+                ['view_finances',    '📊 Ver reportes financieros'],
+                ['manage_stock',     '📦 Gestionar stock e ingresos'],
+                ['close_shift',      '📋 Cerrar turnos de ventas'],
+                ['edit_closed_shift','✏️ Reabrir turnos confirmados'],
+                ['edit_menu',        '📖 Gestionar tipos de vino'],
+                ['settings',         '⚙️ Acceso a configuración'],
+              ].map(([perm, label]) => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+                  <span style="font-size:13px;color:${Auth.can(perm) ? 'var(--text)' : 'var(--text-muted)'}">${label}</span>
+                  <span style="font-size:12px;font-weight:600;color:${Auth.can(perm) ? 'var(--success)' : 'var(--text-muted)'}">${Auth.can(perm) ? '✓' : '—'}</span>
+                </div>`).join('')}
+            </div>
+
+            <div class="card" style="margin-bottom:16px">
+              <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px">Cambiar PIN</div>
+              <div class="field-group" style="margin-bottom:8px">
+                <label class="field-label">PIN actual</label>
+                <input class="field-input" id="inp-pin-actual" type="password" inputmode="numeric" maxlength="4" placeholder="••••">
+              </div>
+              <div class="field-group" style="margin-bottom:8px">
+                <label class="field-label">PIN nuevo</label>
+                <input class="field-input" id="inp-pin-nuevo" type="password" inputmode="numeric" maxlength="4" placeholder="••••">
+              </div>
+              <div class="field-group" style="margin-bottom:12px">
+                <label class="field-label">Confirmar PIN nuevo</label>
+                <input class="field-input" id="inp-pin-confirm" type="password" inputmode="numeric" maxlength="4" placeholder="••••">
+              </div>
+              <div id="pin-error" style="color:var(--error);font-size:13px;margin-bottom:8px;display:none"></div>
+              <button class="btn btn--primary" style="width:100%" id="btn-change-pin">Cambiar PIN</button>
+            </div>
+
+            <button class="btn btn--outline btn--full" id="btn-logout" style="color:var(--error);border-color:var(--error)">Cerrar sesión</button>
+          </div>
+        </div>`,
+      bind() {
+        document.getElementById('btn-back').onclick   = () => Router.back();
+        document.getElementById('btn-logout').onclick = () => { Auth.logout(); Router.replace('login'); };
+        document.getElementById('btn-change-pin').onclick = () => {
+          const actual  = document.getElementById('inp-pin-actual').value;
+          const nuevo   = document.getElementById('inp-pin-nuevo').value;
+          const confirm = document.getElementById('inp-pin-confirm').value;
+          const errEl   = document.getElementById('pin-error');
+          errEl.style.display = 'none';
+          const fail = msg => { errEl.textContent = msg; errEl.style.display = ''; };
+          if (actual !== u.pin)              return fail('El PIN actual no es correcto');
+          if (!/^\d{4}$/.test(nuevo))        return fail('El PIN nuevo debe tener 4 dígitos');
+          if (nuevo !== confirm)             return fail('Los PINs no coinciden');
+          DB.updateUser(u.id, { pin: nuevo });
+          Auth.user.pin = nuevo;
+          Toast.success('PIN actualizado');
+          ['inp-pin-actual','inp-pin-nuevo','inp-pin-confirm'].forEach(id => document.getElementById(id).value = '');
+        };
+      },
+    };
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     PAGE: TEAM (gestión de usuarios)
+  ═══════════════════════════════════════════════════════════════════ */
+  function pageTeam() {
+    const users = DB.getUsers().filter(u => u.activo !== false);
+    return {
+      html: `
+        <div class="screen">
+          <header class="topbar">
+            <button class="topbar__back" id="btn-back">←</button>
+            <span class="topbar__title">Equipo</span>
+            <span></span>
+          </header>
+          <div class="content content--with-fab">
+            ${users.map(u => `
+            <button class="wine-item" data-uid="${u.id}" style="display:flex;align-items:center;gap:12px;padding:12px">
+              <span class="greeting-avatar" style="width:40px;height:40px;font-size:16px;flex-shrink:0;background:${u.color || roleColor(u.roles)}">${u.nombre.charAt(0).toUpperCase()}</span>
+              <div style="flex:1;text-align:left">
+                <div style="font-weight:600;font-size:15px">${escHtml(u.nombre)}</div>
+                <div style="font-size:12px;color:var(--text-2);margin-top:2px">${u.roles.map(roleLabel).join(' · ')}</div>
+              </div>
+              <span style="color:var(--text-muted);font-size:18px">→</span>
+            </button>`).join('')}
+          </div>
+          <button class="fab" id="btn-add">+</button>
+        </div>`,
+      bind() {
+        document.getElementById('btn-back').onclick = () => Router.back();
+        document.getElementById('btn-add').onclick  = () => Router.go('user-form', { mode: 'create' });
+        document.querySelectorAll('[data-uid]').forEach(btn => {
+          btn.onclick = () => Router.go('user-form', { mode: 'edit', userId: btn.dataset.uid });
+        });
+      },
+    };
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     PAGE: USER FORM (alta + edición de usuario)
+  ═══════════════════════════════════════════════════════════════════ */
+  function pageUserForm() {
+    const { mode, userId } = Router.params;
+    const isEdit = mode === 'edit';
+    const u = isEdit ? DB.getUserById(userId) : null;
+    const allRoles = [
+      { id: 'dueno',    label: 'Dueño',           desc: 'Acceso total' },
+      { id: 'head_som', label: 'Head Sommelier',   desc: 'Gestión y cierre de turnos' },
+      { id: 'som',      label: 'Sommelier',        desc: 'Carga de ventas y stock' },
+      { id: 'admin',    label: 'Admin / Contador', desc: 'Costos y reportes financieros' },
+    ];
+    const currentRoles = u?.roles || [];
+
+    return {
+      html: `
+        <div class="screen">
+          <header class="topbar">
+            <button class="topbar__back" id="btn-back">←</button>
+            <span class="topbar__title">${isEdit ? 'Editar usuario' : 'Nuevo usuario'}</span>
+            <span></span>
+          </header>
+          <div class="content">
+            <div class="field-group" style="margin-bottom:12px">
+              <label class="field-label">Nombre completo <span style="color:var(--error)">*</span></label>
+              <input class="field-input" id="inp-nombre" type="text" value="${escHtml(u?.nombre || '')}" placeholder="Nombre del sommelier">
+            </div>
+            <div class="field-group" style="margin-bottom:12px">
+              <label class="field-label">PIN (4 dígitos) ${isEdit ? '<span style="color:var(--text-muted);font-size:11px">(dejar vacío para no cambiar)</span>' : '<span style="color:var(--error)">*</span>'}</label>
+              <input class="field-input" id="inp-pin" type="password" inputmode="numeric" maxlength="4" placeholder="••••" autocomplete="new-password">
+            </div>
+            <div style="margin-bottom:12px">
+              <label class="field-label" style="margin-bottom:8px;display:block">Roles <span style="color:var(--error)">*</span></label>
+              ${allRoles.map(r => `
+              <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:6px;cursor:pointer;background:var(--surface-2)">
+                <input type="checkbox" name="rol" value="${r.id}" ${currentRoles.includes(r.id) ? 'checked' : ''} style="margin-top:2px;accent-color:var(--primary)">
+                <div>
+                  <div style="font-size:14px;font-weight:600">${r.label}</div>
+                  <div style="font-size:12px;color:var(--text-2)">${r.desc}</div>
+                </div>
+              </label>`).join('')}
+            </div>
+            <div id="form-error" style="color:var(--error);font-size:13px;margin-bottom:8px;display:none"></div>
+            <button class="btn btn--primary btn--full" id="btn-save">${isEdit ? 'Guardar cambios' : 'Crear usuario'}</button>
+            ${isEdit && userId !== Auth.user.id ? `
+            <button class="btn btn--outline btn--full" id="btn-baja" style="margin-top:10px;color:var(--error);border-color:var(--error)">Dar de baja</button>
+            <div id="baja-confirm" style="display:none;background:var(--error-bg);border:1px solid var(--error);border-radius:var(--radius-sm);padding:12px;margin-top:8px;font-size:13px;color:var(--text)">
+              ¿Dar de baja a ${escHtml(u?.nombre || '')}? Ya no podrá iniciar sesión.
+              <div style="display:flex;gap:8px;margin-top:10px">
+                <button class="btn btn--primary" id="btn-baja-ok" style="flex:1;background:var(--error);border-color:var(--error)">Confirmar</button>
+                <button class="btn btn--outline" id="btn-baja-cancel" style="flex:1">Cancelar</button>
+              </div>
+            </div>` : ''}
+          </div>
+        </div>`,
+      bind() {
+        document.getElementById('btn-back').onclick = () => Router.back();
+        document.getElementById('btn-save').onclick = () => {
+          const nombre = document.getElementById('inp-nombre').value.trim();
+          const pin    = document.getElementById('inp-pin').value;
+          const roles  = [...document.querySelectorAll('input[name="rol"]:checked')].map(c => c.value);
+          const errEl  = document.getElementById('form-error');
+          errEl.style.display = 'none';
+          const fail = msg => { errEl.textContent = msg; errEl.style.display = ''; };
+          if (!nombre)            return fail('El nombre es requerido');
+          if (!roles.length)      return fail('Seleccioná al menos un rol');
+          if (!isEdit && !/^\d{4}$/.test(pin)) return fail('El PIN debe tener 4 dígitos');
+          if (isEdit && pin && !/^\d{4}$/.test(pin)) return fail('El PIN debe tener 4 dígitos');
+          if (isEdit) {
+            const update = { nombre, roles };
+            if (pin) update.pin = pin;
+            DB.updateUser(userId, update);
+            if (userId === Auth.user.id) { Auth.user.nombre = nombre; Auth.user.roles = roles; }
+            Toast.success('Usuario actualizado');
+          } else {
+            DB.addUser({ id: uid(), nombre, pin, roles, color: roleColor(roles), activo: true, createdAt: now() });
+            Toast.success(`"${nombre}" agregado al equipo`);
+          }
+          Router.back();
+        };
+        const btnBaja = document.getElementById('btn-baja');
+        if (btnBaja) {
+          btnBaja.onclick = () => { document.getElementById('baja-confirm').style.display = ''; btnBaja.style.display = 'none'; };
+          document.getElementById('btn-baja-cancel').onclick = () => { document.getElementById('baja-confirm').style.display = 'none'; btnBaja.style.display = ''; };
+          document.getElementById('btn-baja-ok').onclick = () => { DB.updateUser(userId, { activo: false }); Toast.success('Usuario dado de baja'); Router.go('team'); };
+        }
+      },
+    };
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
      APP
   ═══════════════════════════════════════════════════════════════════ */
   const App = {
@@ -4377,6 +4756,10 @@
         'ingreso-form':      pageIngresoForm,
         'ingreso-preview':   pageIngresoPreview,
         'ingreso-detail':    pageIngresoDetail,
+        settings:            pageSettings,
+        'user-profile':      pageUserProfile,
+        team:                pageTeam,
+        'user-form':         pageUserForm,
       };
       const fn   = pages[Router.current] || pageDashboard;
       const view = fn();
