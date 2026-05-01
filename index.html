@@ -1833,9 +1833,41 @@
                 <select class="field__input field__select" id="inp-proveedor">
                   <option value="">Sin proveedor asignado</option>
                   ${DB.getProveedores().filter(p => p.activo !== false).map(p =>
-                    `<option value="${p.id}"${v.proveedorId === p.id ? ' selected' : ''}>${escHtml(p.nombre)}</option>`
+                    `<option value="${p.id}"${v.proveedorId === p.id ? ' selected' : ''}>${escHtml(p.nombre_fantasia || p.nombre)}</option>`
                   ).join('')}
                 </select>
+                <button type="button" id="btn-nuevo-prov" style="margin-top:6px;font-size:12px;color:var(--gold);background:none;border:1px solid var(--border);border-radius:var(--radius-sm);padding:5px 10px;cursor:pointer;width:100%">
+                  + Crear proveedor nuevo
+                </button>
+                <div id="nuevo-prov-panel" style="display:none;margin-top:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+                  <div style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.05em">Nuevo proveedor</div>
+                  <div class="field-group" style="margin-bottom:8px">
+                    <label class="field-label">Razón social <span style="color:var(--error)">*</span></label>
+                    <input class="field-input" id="inp-np-nombre" type="text" placeholder="Ej: Bodegas Catena Zapata S.A." autocomplete="off">
+                  </div>
+                  <div class="field-group" style="margin-bottom:8px">
+                    <label class="field-label">Nombre fantasía</label>
+                    <input class="field-input" id="inp-np-fantasia" type="text" placeholder="Ej: Catena Zapata">
+                  </div>
+                  <div class="field-group" style="margin-bottom:8px">
+                    <label class="field-label">Vendedor / contacto</label>
+                    <input class="field-input" id="inp-np-contacto" type="text" placeholder="Nombre del vendedor">
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+                    <div class="field-group">
+                      <label class="field-label">Teléfono</label>
+                      <input class="field-input" id="inp-np-tel" type="tel" placeholder="261 4123456">
+                    </div>
+                    <div class="field-group">
+                      <label class="field-label">Email</label>
+                      <input class="field-input" id="inp-np-email" type="email" placeholder="contacto@prov.com">
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:8px">
+                    <button type="button" class="btn btn--primary" id="btn-np-save" style="flex:1;font-size:13px">Crear y asignar</button>
+                    <button type="button" class="btn btn--outline" id="btn-np-cancel" style="flex:1;font-size:13px">Cancelar</button>
+                  </div>
+                </div>
               </div>
 
               <!-- TU MENÚ -->
@@ -1857,8 +1889,26 @@
                 </label>
               </div>
               <div class="field hidden" id="f-stock-init">
-                <label class="field__label">Cantidad inicial (botellas)</label>
-                <input class="field__input" id="inp-stock" type="number" min="0" value="0" inputmode="numeric">
+                <label class="field__label">Cantidad inicial</label>
+                <div id="f-stock-botellas">
+                  <input class="field__input" id="inp-stock" type="number" min="0" value="0" inputmode="numeric" placeholder="0 botellas">
+                </div>
+                <div id="f-stock-cajas" style="display:none;margin-top:8px">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <input class="field__input" id="inp-cajas" type="number" min="1" value="1" inputmode="numeric" style="flex:1;text-align:center">
+                    <span style="color:var(--text-2);font-size:13px;white-space:nowrap">cajas ×</span>
+                    <input class="field__input" id="inp-bot-caja" type="number" min="1" value="6" inputmode="numeric" style="flex:1;text-align:center">
+                    <span style="color:var(--text-2);font-size:13px;white-space:nowrap">bot/caja</span>
+                  </div>
+                  <div style="margin-top:6px;font-size:13px;color:var(--text-2);text-align:right">
+                    Total: <strong id="cajas-total" style="color:var(--gold)">6</strong> botellas
+                  </div>
+                </div>
+                <label class="toggle-label" style="margin-top:10px">
+                  <input type="checkbox" id="chk-cajas" class="toggle-check">
+                  <span class="toggle-switch"></span>
+                  <span class="toggle-text" style="font-size:12px;color:var(--text-2)">Ingresar por cajas</span>
+                </label>
               </div>` : ''}
 
               <div class="form-actions">
@@ -1885,11 +1935,60 @@
       bind() {
         document.getElementById('btn-back').onclick = () => Router.back();
 
-        // ── Toggle stock inicial ──────────────────────────────────
+        // ── Crear proveedor inline ────────────────────────────────
+        document.getElementById('btn-nuevo-prov').onclick = () => {
+          document.getElementById('nuevo-prov-panel').style.display = '';
+          document.getElementById('btn-nuevo-prov').style.display = 'none';
+          document.getElementById('inp-np-nombre').focus();
+        };
+        document.getElementById('btn-np-cancel').onclick = () => {
+          document.getElementById('nuevo-prov-panel').style.display = 'none';
+          document.getElementById('btn-nuevo-prov').style.display = '';
+        };
+        document.getElementById('btn-np-save').onclick = () => {
+          const nombre = document.getElementById('inp-np-nombre').value.trim();
+          if (!nombre) { Toast.error('La razón social es requerida'); return; }
+          const nuevo = DB.addProveedor({
+            id:              uid(),
+            nombre,
+            nombre_fantasia: document.getElementById('inp-np-fantasia').value.trim(),
+            nombre_contacto: document.getElementById('inp-np-contacto').value.trim(),
+            telefono:        document.getElementById('inp-np-tel').value.trim(),
+            email:           document.getElementById('inp-np-email').value.trim(),
+            condiciones_pago: '',
+            notas:           '',
+            activo:          true,
+            creadoEn:        now(),
+            creadoPor:       Auth.user.id,
+          });
+          const sel = document.getElementById('inp-proveedor');
+          const label = nuevo.nombre_fantasia || nuevo.nombre;
+          const opt = document.createElement('option');
+          opt.value = nuevo.id;
+          opt.textContent = label;
+          opt.selected = true;
+          sel.appendChild(opt);
+          document.getElementById('nuevo-prov-panel').style.display = 'none';
+          document.getElementById('btn-nuevo-prov').style.display = '';
+          Toast.success(`"${label}" creado y asignado`);
+        };
+
+        // ── Toggle stock inicial + cajas ──────────────────────────
         if (!isEdit) {
           document.getElementById('chk-stock').onchange = e => {
             document.getElementById('f-stock-init').classList.toggle('hidden', !e.target.checked);
           };
+          document.getElementById('chk-cajas').onchange = e => {
+            document.getElementById('f-stock-botellas').style.display = e.target.checked ? 'none' : '';
+            document.getElementById('f-stock-cajas').style.display    = e.target.checked ? '' : 'none';
+          };
+          const calcCajas = () => {
+            const c = Math.max(1, parseInt(document.getElementById('inp-cajas').value) || 1);
+            const b = Math.max(1, parseInt(document.getElementById('inp-bot-caja').value) || 1);
+            document.getElementById('cajas-total').textContent = c * b;
+          };
+          document.getElementById('inp-cajas').oninput    = calcCajas;
+          document.getElementById('inp-bot-caja').oninput = calcCajas;
         }
 
         // ── Autocomplete nombre ───────────────────────────────────
@@ -1989,8 +2088,12 @@
             Router.back();
 
           } else {
-            const chk      = document.getElementById('chk-stock');
-            const stockQty = chk?.checked ? Math.max(0, Number(document.getElementById('inp-stock').value) || 0) : 0;
+            const chk       = document.getElementById('chk-stock');
+            const usaCajas  = chk?.checked && document.getElementById('chk-cajas')?.checked;
+            const stockQty  = !chk?.checked ? 0
+              : usaCajas
+                ? Math.max(1, parseInt(document.getElementById('inp-cajas').value)||1) * Math.max(1, parseInt(document.getElementById('inp-bot-caja').value)||1)
+                : Math.max(0, Number(document.getElementById('inp-stock').value) || 0);
 
             const newWine = {
               id:           uid(),
@@ -3348,11 +3451,20 @@
             </div>
             <div class="field-group">
               <label class="field-label">Razón social <span style="color:var(--error)">*</span></label>
-              <input class="field-input" id="inp-nombre" type="text" placeholder="Ej: Bodegas Catena Zapata" value="${escHtml(p?.nombre || prefill || '')}" autocomplete="off">
+              <input class="field-input" id="inp-nombre" type="text" placeholder="Ej: Bodegas Catena Zapata S.A." value="${escHtml(p?.nombre || prefill || '')}" autocomplete="off">
+            </div>
+            <div class="field-group">
+              <label class="field-label">Nombre fantasía <span style="color:var(--text-muted);font-size:11px;font-weight:400">(cómo se conoce)</span></label>
+              <input class="field-input" id="inp-fantasia" type="text" placeholder="Ej: Catena Zapata" value="${escHtml(p?.nombre_fantasia || '')}">
             </div>
             <div class="field-group">
               <label class="field-label">CUIT</label>
               <input class="field-input" id="inp-cuit" type="text" placeholder="Ej: 30-12345678-9" value="${escHtml(p?.cuit || '')}">
+            </div>
+            <div style="margin:14px 0 6px;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Contacto comercial</div>
+            <div class="field-group">
+              <label class="field-label">Nombre del vendedor / contacto</label>
+              <input class="field-input" id="inp-contacto" type="text" placeholder="Ej: Martín López" value="${escHtml(p?.nombre_contacto || '')}">
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
               <div class="field-group">
@@ -3365,8 +3477,12 @@
               </div>
             </div>
             <div class="field-group">
+              <label class="field-label">Condiciones de pago</label>
+              <input class="field-input" id="inp-condpago" type="text" placeholder="Ej: 30 días, contado con 5% desc." value="${escHtml(p?.condiciones_pago || '')}">
+            </div>
+            <div class="field-group">
               <label class="field-label">Notas</label>
-              <textarea class="field-input" id="inp-notas" rows="3" placeholder="Contacto, condiciones, observaciones…" style="resize:none">${escHtml(p?.notas || '')}</textarea>
+              <textarea class="field-input" id="inp-notas" rows="2" placeholder="Observaciones adicionales…" style="resize:none">${escHtml(p?.notas || '')}</textarea>
             </div>
             <button class="btn btn--primary" id="btn-save" style="width:100%;margin-top:8px">${isEdit ? 'Guardar cambios' : 'Crear proveedor'}</button>
             ${isEdit ? `
@@ -3406,11 +3522,14 @@
 
           const data = {
             nombre,
-            cuit:     document.getElementById('inp-cuit').value.trim(),
-            telefono: document.getElementById('inp-tel').value.trim(),
-            email:    document.getElementById('inp-email').value.trim(),
-            notas:    document.getElementById('inp-notas').value.trim(),
-            activo:   true,
+            nombre_fantasia:  document.getElementById('inp-fantasia').value.trim(),
+            nombre_contacto:  document.getElementById('inp-contacto').value.trim(),
+            cuit:             document.getElementById('inp-cuit').value.trim(),
+            telefono:         document.getElementById('inp-tel').value.trim(),
+            email:            document.getElementById('inp-email').value.trim(),
+            condiciones_pago: document.getElementById('inp-condpago').value.trim(),
+            notas:            document.getElementById('inp-notas').value.trim(),
+            activo:           true,
           };
 
           if (isEdit) {
@@ -3493,10 +3612,16 @@
           <div class="content">
             <div class="prov-ficha">
               <div class="prov-ficha__name">${escHtml(p.nombre)}</div>
-              ${p.cuit     ? `<div class="prov-ficha__cuit">CUIT ${escHtml(p.cuit)}</div>` : ''}
-              ${p.telefono ? `<div style="font-size:13px;color:var(--text-2);margin-top:4px">📞 ${escHtml(p.telefono)}</div>` : ''}
-              ${p.email    ? `<div style="font-size:13px;color:var(--text-2)">✉️ ${escHtml(p.email)}</div>` : ''}
-              ${p.notas    ? `<div style="font-size:13px;color:var(--text-muted);margin-top:8px;border-top:1px solid var(--border);padding-top:8px">${escHtml(p.notas)}</div>` : ''}
+              ${p.nombre_fantasia ? `<div style="font-size:13px;color:var(--gold);margin-top:2px">${escHtml(p.nombre_fantasia)}</div>` : ''}
+              ${p.cuit            ? `<div class="prov-ficha__cuit">CUIT ${escHtml(p.cuit)}</div>` : ''}
+              ${(p.nombre_contacto || p.telefono || p.email) ? `
+              <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+                ${p.nombre_contacto ? `<div style="font-size:13px;color:var(--text-2);margin-bottom:4px">👤 ${escHtml(p.nombre_contacto)}</div>` : ''}
+                ${p.telefono        ? `<div style="font-size:13px;color:var(--text-2)">📞 ${escHtml(p.telefono)}</div>` : ''}
+                ${p.email           ? `<div style="font-size:13px;color:var(--text-2)">✉️ ${escHtml(p.email)}</div>` : ''}
+              </div>` : ''}
+              ${p.condiciones_pago ? `<div style="font-size:12px;color:var(--text-muted);margin-top:8px">💳 ${escHtml(p.condiciones_pago)}</div>` : ''}
+              ${p.notas            ? `<div style="font-size:13px;color:var(--text-muted);margin-top:8px;border-top:1px solid var(--border);padding-top:8px">${escHtml(p.notas)}</div>` : ''}
             </div>
 
             <div class="prov-stats">
@@ -3912,25 +4037,56 @@
                     <span style="font-size:11px;color:var(--text-muted)">Podés asignarlo después</span>
                   </div>
                 </div>` : ''}
-              <div style="display:flex;gap:10px;margin-bottom:10px">
-                <div class="field-group" style="flex:1">
-                  <label class="field-label">Cantidad</label>
+              <div style="margin-bottom:10px">
+                <label class="field-label">Cantidad</label>
+                <div id="ing-modo-botellas">
                   <input class="field-input" id="inp-cantidad" type="number" min="1" placeholder="0" inputmode="numeric">
                 </div>
-                <div class="field-group" style="flex:1">
-                  <label class="field-label">Costo unitario${canEditCost ? '' : ' <span style="color:var(--text-muted)">🔒</span>'}</label>
-                  <input class="field-input" id="inp-costo" type="number" min="0" step="0.01"
-                    value="${costoDefault}" placeholder="0.00" inputmode="decimal"
-                    ${!canEditCost ? 'disabled' : ''}>
-                  ${costoHint ? `<span style="font-size:12px;color:var(--text-muted)">${costoHint}</span>` : ''}
+                <div id="ing-modo-cajas" style="display:none">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <input class="field-input" id="inp-ing-cajas" type="number" min="1" value="1" inputmode="numeric" style="flex:1;text-align:center">
+                    <span style="color:var(--text-2);font-size:13px;white-space:nowrap">cajas ×</span>
+                    <input class="field-input" id="inp-ing-bot-caja" type="number" min="1" value="6" inputmode="numeric" style="flex:1;text-align:center">
+                    <span style="color:var(--text-2);font-size:13px;white-space:nowrap">bot/caja</span>
+                  </div>
+                  <div style="margin-top:4px;font-size:13px;color:var(--text-2);text-align:right">
+                    Total: <strong id="ing-cajas-total" style="color:var(--gold)">6</strong> bot.
+                  </div>
                 </div>
+                <label style="display:flex;align-items:center;gap:6px;margin-top:8px;cursor:pointer">
+                  <input type="checkbox" id="chk-ing-cajas" style="accent-color:var(--gold)">
+                  <span style="font-size:12px;color:var(--text-2)">Ingresar por cajas</span>
+                </label>
+              </div>
+              <div class="field-group" style="margin-bottom:10px">
+                <label class="field-label">Costo unitario${canEditCost ? '' : ' <span style="color:var(--text-muted)">🔒</span>'}</label>
+                <input class="field-input" id="inp-costo" type="number" min="0" step="0.01"
+                  value="${costoDefault}" placeholder="0.00" inputmode="decimal"
+                  ${!canEditCost ? 'disabled' : ''}>
+                ${costoHint ? `<span style="font-size:12px;color:var(--text-muted)">${costoHint}</span>` : ''}
               </div>
               <button class="btn btn--primary" id="btn-add-item" style="width:100%">Agregar ítem</button>
             </div>`;
 
+          // Cajas toggle en ingreso form
+          const chkIngCajas = document.getElementById('chk-ing-cajas');
+          const calcIngCajas = () => {
+            const c = Math.max(1, parseInt(document.getElementById('inp-ing-cajas').value) || 1);
+            const b = Math.max(1, parseInt(document.getElementById('inp-ing-bot-caja').value) || 1);
+            document.getElementById('ing-cajas-total').textContent = c * b;
+          };
+          chkIngCajas.onchange = e => {
+            document.getElementById('ing-modo-botellas').style.display = e.target.checked ? 'none' : '';
+            document.getElementById('ing-modo-cajas').style.display    = e.target.checked ? '' : 'none';
+          };
+          document.getElementById('inp-ing-cajas').oninput    = calcIngCajas;
+          document.getElementById('inp-ing-bot-caja').oninput = calcIngCajas;
+
           document.getElementById('btn-add-item').onclick = () => {
-            const cantEl  = document.getElementById('inp-cantidad');
-            const cantVal = parseInt(cantEl.value);
+            const usaCajas = document.getElementById('chk-ing-cajas').checked;
+            const cantVal  = usaCajas
+              ? Math.max(1, parseInt(document.getElementById('inp-ing-cajas').value)||1) * Math.max(1, parseInt(document.getElementById('inp-ing-bot-caja').value)||1)
+              : parseInt(document.getElementById('inp-cantidad').value);
             const costo   = canEditCost
               ? parseFloat(document.getElementById('inp-costo').value)
               : (wines.find(w => w.id === wineId)?.costo || 0);
