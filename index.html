@@ -1712,6 +1712,7 @@
           </header>
           <div class="content content--with-fab">
             ${Auth.can('manage_stock') ? `<button class="stock-ingreso-btn" id="btn-ingreso">📦 Ingreso de Mercadería</button>` : ''}
+            <button class="stock-ingreso-btn" id="btn-panorama" style="border-color:var(--gold);color:var(--gold)">📊 Panorama de bodega</button>
             <div class="search-bar">
               <input class="search-bar__input" id="inp-search" type="search" placeholder="Buscar vino…" autocomplete="off">
             </div>
@@ -1734,8 +1735,9 @@
           <button class="fab" id="btn-add">+</button>
         </div>`,
       bind() {
-        document.getElementById('btn-back').onclick = () => Router.back();
-        document.getElementById('btn-add').onclick  = () => Router.go('wine-form', { mode: 'create' });
+        document.getElementById('btn-back').onclick    = () => Router.back();
+        document.getElementById('btn-add').onclick     = () => Router.go('wine-form', { mode: 'create' });
+        document.getElementById('btn-panorama').onclick = () => Router.go('stock-analytics');
 
         if (Auth.can('settings')) {
           document.getElementById('btn-types').onclick = () => Router.go('wine-types');
@@ -4731,6 +4733,228 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════
+     PAGE: STOCK ANALYTICS — Panorama de bodega
+  ═══════════════════════════════════════════════════════════════════ */
+  function pageStockAnalytics() {
+    const wines     = DB.getWines().filter(w => w.activo !== false);
+    const provs     = DB.getProveedores();
+    const movements = DB.getMovements();
+    const STOCK_BAJO = DB.getSetup().stockBajo ?? 3;
+
+    // ── Paleta de colores ─────────────────────────────────────────
+    const COLORS = ['#8B1C2E','#C9A84C','#4A9460','#4A70B0','#9B4490','#C08030','#2A8090','#C05060'];
+
+    // ── KPIs ──────────────────────────────────────────────────────
+    const totalBot = wines.reduce((s, w) => s + (w.stock_actual || 0), 0);
+    const capital  = wines.reduce((s, w) => s + (w.costo || 0) * (w.stock_actual || 0), 0);
+    const carta    = wines.reduce((s, w) => s + (w.precio_carta || 0) * (w.stock_actual || 0), 0);
+    const margen   = carta - capital;
+    const margenPct = carta > 0 ? Math.round((margen / carta) * 100) : 0;
+
+    // ── Formato compacto para centro del donut ────────────────────
+    const fmtK = n => n >= 1000000 ? `$${(n / 1000000).toFixed(1)}M`
+                    : n >= 1000    ? `$${Math.round(n / 1000)}K`
+                    :                `$${Math.round(n)}`;
+
+    // ── Donut SVG reutilizable ────────────────────────────────────
+    const C = 2 * Math.PI * 38;
+    const renderDonut = (segs, cLabel, cSub) => {
+      const total = segs.reduce((s, g) => s + g.value, 0);
+      if (!total) return `
+        <svg viewBox="0 0 100 100" style="width:148px;height:148px;flex-shrink:0">
+          <circle cx="50" cy="50" r="38" fill="none" stroke="var(--surface-3)" stroke-width="12"/>
+          <text x="50" y="54" text-anchor="middle" fill="var(--text-muted)" font-size="7" font-family="sans-serif">Sin datos</text>
+        </svg>`;
+      let acc = 0;
+      const arcs = segs.map(s => { const len = (s.value / total) * C; const a = { ...s, len, off: acc }; acc += len; return a; });
+      const fs = cLabel.length > 6 ? '8' : '10';
+      return `
+        <svg viewBox="0 0 100 100" style="transform:rotate(-90deg);width:148px;height:148px;flex-shrink:0">
+          ${arcs.map(a => `<circle cx="50" cy="50" r="38" fill="none" stroke="${a.color}" stroke-width="12"
+            stroke-dasharray="${a.len.toFixed(2)} ${C.toFixed(2)}"
+            stroke-dashoffset="${(-a.off).toFixed(2)}"/>`).join('')}
+          <circle cx="50" cy="50" r="27" fill="var(--surface-2)"/>
+          <g transform="rotate(90,50,50)">
+            <text x="50" y="${cSub ? '46' : '53'}" text-anchor="middle" fill="var(--text)" font-size="${fs}" font-weight="700" font-family="sans-serif">${cLabel}</text>
+            ${cSub ? `<text x="50" y="57" text-anchor="middle" fill="var(--text-2)" font-size="7" font-family="sans-serif">${cSub}</text>` : ''}
+          </g>
+        </svg>`;
+    };
+
+    // ── Leyenda reutilizable ──────────────────────────────────────
+    const renderLegend = (segs, capBase) => segs.map(s => `
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:7px">
+        <div style="width:9px;height:9px;border-radius:50%;background:${s.color};flex-shrink:0"></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(s.label)}</div>
+          <div style="font-size:10px;color:var(--text-2)">${s.bottles ?? ''} bot · ${capBase > 0 ? Math.round(s.value / capBase * 100) : 0}%</div>
+        </div>
+        <div style="font-size:11px;color:var(--gold);font-weight:600;white-space:nowrap">${fmtK(s.value)}</div>
+      </div>`).join('');
+
+    // ── Segmentos: por tipo ───────────────────────────────────────
+    const byTipo = {};
+    wines.forEach(w => {
+      const t = w.tipo || 'Sin tipo';
+      if (!byTipo[t]) byTipo[t] = { botellas: 0, capital: 0 };
+      byTipo[t].botellas += w.stock_actual || 0;
+      byTipo[t].capital  += (w.costo || 0) * (w.stock_actual || 0);
+    });
+    const tipoSegs = Object.entries(byTipo)
+      .sort((a, b) => b[1].capital - a[1].capital)
+      .map(([label, d], i) => ({ label, value: d.capital, bottles: d.botellas, color: COLORS[i % COLORS.length] }));
+
+    // ── Segmentos: por proveedor ──────────────────────────────────
+    const byProv = {};
+    wines.forEach(w => {
+      const p = provs.find(p => p.id === w.proveedorId);
+      const nombre = p ? (p.nombre_fantasia || p.nombre) : 'Sin proveedor';
+      if (!byProv[nombre]) byProv[nombre] = { botellas: 0, capital: 0 };
+      byProv[nombre].botellas += w.stock_actual || 0;
+      byProv[nombre].capital  += (w.costo || 0) * (w.stock_actual || 0);
+    });
+    const provEntries = Object.entries(byProv).sort((a, b) => b[1].capital - a[1].capital);
+    const provSegs = provEntries.slice(0, 6).map(([label, d], i) => ({ label, value: d.capital, bottles: d.botellas, color: COLORS[i % COLORS.length] }));
+    if (provEntries.length > 6) {
+      const rest = provEntries.slice(6);
+      provSegs.push({ label: `Otros (${rest.length})`, value: rest.reduce((s, [, d]) => s + d.capital, 0), bottles: rest.reduce((s, [, d]) => s + d.botellas, 0), color: '#555' });
+    }
+
+    // ── Segmentos: top 5 capital inmovilizado ─────────────────────
+    const top5 = [...wines]
+      .map(w => ({ ...w, cap: (w.costo || 0) * (w.stock_actual || 0) }))
+      .filter(w => w.cap > 0)
+      .sort((a, b) => b.cap - a.cap)
+      .slice(0, 5);
+    const top5Segs  = top5.map((w, i) => ({ label: w.nombre, value: w.cap, bottles: w.stock_actual, color: COLORS[i % COLORS.length] }));
+    const top5Total = top5.reduce((s, w) => s + w.cap, 0);
+
+    // ── Alertas ───────────────────────────────────────────────────
+    const sinStock      = wines.filter(w => (w.stock_actual || 0) === 0);
+    const bajoStockList = wines.filter(w => (w.stock_actual || 0) > 0 && (w.stock_actual || 0) <= STOCK_BAJO);
+    const hace30 = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const sinMov = wines.filter(w => {
+      if ((w.stock_actual || 0) === 0) return false;
+      const wMovs = movements.filter(m => m.wineId === w.id);
+      if (!wMovs.length) return true;
+      return Math.max(...wMovs.map(m => new Date(m.createdAt).getTime())) < hace30;
+    });
+
+    const alertRow = (w, color, sub) => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--surface-3)">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            ${escHtml(w.nombre)} <span style="color:var(--text-muted);font-weight:400">${w.añada || ''}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted)">${sub}</div>
+        </div>
+        <span style="font-size:12px;font-weight:700;color:${color};white-space:nowrap;margin-left:8px">${w.stock_actual || 0} bot.</span>
+      </div>`;
+
+    const alertSection = (title, color, list, sub, max = 5) => !list.length ? '' : `
+      <div style="font-size:11px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">${title} (${list.length})</div>
+      ${list.slice(0, max).map(w => alertRow(w, color, sub)).join('')}
+      ${list.length > max ? `<div style="font-size:11px;color:var(--text-muted);padding:5px 0">… y ${list.length - max} más</div>` : ''}
+      <div style="height:12px"></div>`;
+
+    const hayAlertas = sinStock.length || bajoStockList.length || sinMov.length;
+
+    return {
+      html: `
+        <div class="screen">
+          <header class="topbar">
+            <button class="topbar__back" id="btn-back">←</button>
+            <span class="topbar__title">Panorama de bodega</span>
+            <span></span>
+          </header>
+          <div class="content">
+
+            <!-- KPIs -->
+            <div class="card" style="margin-bottom:16px">
+              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">
+                Inventario total · ${totalBot} botellas · ${wines.length} etiquetas
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <div>
+                    <div style="font-size:13px;color:var(--text-2)">💰 Capital en bodega</div>
+                    <div style="font-size:11px;color:var(--text-muted)">Valor al costo de compra</div>
+                  </div>
+                  <div style="font-size:20px;font-weight:700">${fmtCurrency(capital)}</div>
+                </div>
+                <div style="height:1px;background:var(--surface-3)"></div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <div>
+                    <div style="font-size:13px;color:var(--text-2)">🏷️ Valor a carta</div>
+                    <div style="font-size:11px;color:var(--text-muted)">Si vendés todo al precio de carta</div>
+                  </div>
+                  <div style="font-size:20px;font-weight:700;color:var(--gold)">${fmtCurrency(carta)}</div>
+                </div>
+                <div style="height:1px;background:var(--surface-3)"></div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <div>
+                    <div style="font-size:13px;color:var(--text-2)">📈 Margen potencial</div>
+                    <div style="font-size:11px;color:var(--text-muted)">Ganancia bruta sobre el inventario</div>
+                  </div>
+                  <div style="text-align:right">
+                    <div style="font-size:20px;font-weight:700;color:var(--success)">${fmtCurrency(margen)}</div>
+                    <div style="font-size:11px;color:var(--text-2)">${margenPct}% sobre carta</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Por tipo de vino -->
+            <div class="card" style="margin-bottom:16px">
+              <div style="font-size:13px;font-weight:700;margin-bottom:14px">Por tipo de vino</div>
+              <div style="display:flex;gap:14px;align-items:center">
+                ${renderDonut(tipoSegs, `${totalBot}`, 'bot.')}
+                <div style="flex:1;min-width:0">${renderLegend(tipoSegs, capital)}</div>
+              </div>
+            </div>
+
+            <!-- Por proveedor -->
+            <div class="card" style="margin-bottom:16px">
+              <div style="font-size:13px;font-weight:700;margin-bottom:14px">Por proveedor</div>
+              <div style="display:flex;gap:14px;align-items:center">
+                ${renderDonut(provSegs, fmtK(capital), 'capital')}
+                <div style="flex:1;min-width:0">${renderLegend(provSegs, capital)}</div>
+              </div>
+            </div>
+
+            <!-- Top 5 capital inmovilizado -->
+            <div class="card" style="margin-bottom:16px">
+              <div style="font-size:13px;font-weight:700;margin-bottom:14px">Mayor capital inmovilizado</div>
+              ${top5Segs.length
+                ? `<div style="display:flex;gap:14px;align-items:center">
+                    ${renderDonut(top5Segs, 'Top 5', 'vinos')}
+                    <div style="flex:1;min-width:0">${renderLegend(top5Segs, top5Total)}</div>
+                  </div>`
+                : `<div style="font-size:13px;color:var(--text-muted)">Sin vinos con costo registrado</div>`}
+            </div>
+
+            <!-- Alertas -->
+            <div class="card" style="margin-bottom:24px">
+              <div style="font-size:13px;font-weight:700;margin-bottom:12px">⚠️ Alertas de gestión</div>
+              ${hayAlertas
+                ? alertSection('Sin stock', 'var(--error)', sinStock, 'Sin existencias') +
+                  alertSection('Bajo stock &le;' + STOCK_BAJO + ' bot.', 'var(--warning)', bajoStockList, 'Umbral: ' + STOCK_BAJO + ' bot.') +
+                  alertSection('Sin movimiento 30 días', 'var(--text-2)', sinMov, 'Posible stock congelado')
+                : `<div style="text-align:center;padding:16px 0">
+                    <div style="font-size:28px;margin-bottom:8px">&#10003;</div>
+                    <div style="font-size:13px;color:var(--text-2)">Sin alertas activas</div>
+                  </div>`}
+            </div>
+
+          </div>
+        </div>`,
+      bind() {
+        document.getElementById('btn-back').onclick = () => Router.back();
+      },
+    };
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
      PAGE: IMPORTAR CARTA (CSV)
   ═══════════════════════════════════════════════════════════════════ */
   function pageImportWines() {
@@ -5376,6 +5600,7 @@
         'user-profile':      pageUserProfile,
         team:                pageTeam,
         'user-form':         pageUserForm,
+        'stock-analytics':   pageStockAnalytics,
         'import-wines':      pageImportWines,
         'import-stock':      pageImportStock,
       };
