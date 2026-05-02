@@ -148,6 +148,16 @@
       transition: transform 0.15s, background 0.15s;
     }
     .fab:active { transform: scale(0.93); background: var(--primary-h); }
+    .fab--open  { transform: rotate(45deg) !important; background: var(--surface-3) !important; }
+
+    /* Speed-dial */
+    .fab-dial { position: absolute; bottom: 24px; right: 20px; z-index: 20; display: flex; flex-direction: column; align-items: flex-end; gap: 12px; }
+    .fab-dial__overlay { position: fixed; inset: 0; z-index: 15; background: rgba(0,0,0,.45); }
+    .fab-dial__items { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+    .fab-dial__item { display: flex; align-items: center; gap: 10px; z-index: 21; opacity: 0; transform: translateY(10px) scale(.95); transition: opacity .18s, transform .18s; pointer-events: none; }
+    .fab-dial__item--visible { opacity: 1; transform: none; pointer-events: auto; }
+    .fab-dial__label { background: var(--surface-3); border: 1px solid var(--border-light); color: var(--text); font-size: 13px; font-weight: 600; padding: 6px 13px; border-radius: 20px; white-space: nowrap; box-shadow: var(--shadow); }
+    .fab-dial__btn { width: 44px; height: 44px; border-radius: 50%; background: var(--surface-2); border: 1px solid var(--border-light); font-size: 20px; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); flex-shrink: 0; }
 
     .home-pill {
       position: absolute;
@@ -1602,7 +1612,7 @@
             <span class="topbar__restaurant">${setup.restaurantName || 'The Wine Companion'}</span>
             <button class="topbar__logout" id="btn-logout">Salir</button>
           </header>
-          <div class="content">
+          <div class="content content--with-fab">
             <div class="dashboard-greeting">
               <span class="greeting-avatar" style="background:${u.color || roleColor(u.roles)}">${u.nombre.charAt(0).toUpperCase()}</span>
               <div>
@@ -1613,18 +1623,18 @@
             <div class="module-grid">
               <button class="module-card module-card--active" data-go="stock">
                 <span class="module-card__icon">🍾</span>
-                <span class="module-card__name">Stock</span>
+                <span class="module-card__name">Manejo de stock</span>
                 <span class="module-card__count">${wines.length} etiquetas</span>
               </button>
               <button class="module-card module-card--active" data-go="ventas">
                 <span class="module-card__icon">📋</span>
                 <span class="module-card__name">Ventas</span>
-                <span class="module-card__count">${inProg ? '⚡ En progreso' : infHoy ? `${infHoy} hoy` : 'Nuevo informe'}</span>
+                <span class="module-card__count">${inProg ? '⚡ En progreso' : infHoy ? `${infHoy} hoy` : 'Ver historial'}</span>
               </button>
-              <button class="module-card module-card--active" data-go="ingresos">
-                <span class="module-card__icon">📦</span>
-                <span class="module-card__name">Ingresar mercadería</span>
-                <span class="module-card__count">${ingProg ? '⚡ En progreso' : 'Nuevo ingreso'}</span>
+              <button class="module-card module-card--active" data-go="stock-analytics">
+                <span class="module-card__icon">📊</span>
+                <span class="module-card__name">Panorama de bodega</span>
+                <span class="module-card__count">${factMesDash > 0 ? fmtCurrency(factMesDash) + ' fact. mes' : 'Análisis de inventario'}</span>
               </button>
               ${Auth.can('manage_stock') ? `
               <button class="module-card module-card--active" data-go="proveedores">
@@ -1634,9 +1644,9 @@
               </button>` : ''}
               ${Auth.can('view_finances') ? `
               <button class="module-card module-card--active" data-go="ventas-reportes">
-                <span class="module-card__icon">📊</span>
+                <span class="module-card__icon">📈</span>
                 <span class="module-card__name">Reportes</span>
-                <span class="module-card__count">${factMesDash > 0 ? fmtCurrency(factMesDash) + ' este mes' : 'Ver estadísticas'}</span>
+                <span class="module-card__count">Ventas · Compras</span>
               </button>` : ''}
               ${Auth.can('settings') ? `
               <button class="module-card module-card--active" data-go="settings">
@@ -1646,20 +1656,74 @@
               </button>` : ''}
             </div>
           </div>
+
+          <!-- FAB speed-dial -->
+          <div class="fab-dial" id="fab-dial">
+            <div class="fab-dial__items" id="fab-items">
+              ${Auth.can('manage_stock') ? `
+              <div class="fab-dial__item" data-action="ingreso">
+                <span class="fab-dial__label">Ingresar mercadería</span>
+                <button class="fab-dial__btn">📦</button>
+              </div>` : ''}
+              ${Auth.can('close_shift') ? `
+              <div class="fab-dial__item" data-action="turno">
+                <span class="fab-dial__label">${inProg ? 'Continuar turno' : 'Cargar turno'}</span>
+                <button class="fab-dial__btn">📋</button>
+              </div>` : ''}
+            </div>
+            <button class="fab" id="fab-main">+</button>
+          </div>
         </div>`,
       bind() {
         document.getElementById('btn-logout').onclick = () => { Auth.logout(); Router.replace('login'); };
         const goMap = {
-          'stock':          'stock',
-          'ventas':         'ventas',
-          'ingresos':       'ingresos',
-          'proveedores':    'proveedores',
-          'ventas-reportes':'ventas-reportes',
-          'settings':       'settings',
+          'stock':           'stock',
+          'ventas':          'ventas',
+          'proveedores':     'proveedores',
+          'ventas-reportes': 'ventas-reportes',
+          'settings':        'settings',
+          'stock-analytics': 'stock-analytics',
         };
         document.querySelectorAll('[data-go]').forEach(btn => {
           const dest = goMap[btn.dataset.go];
           if (dest) btn.onclick = () => Router.go(dest);
+        });
+
+        // Speed-dial
+        const fabMain  = document.getElementById('fab-main');
+        const fabItems = document.querySelectorAll('#fab-items .fab-dial__item');
+        let fabOpen = false;
+        const openDial = () => {
+          fabOpen = true;
+          fabMain.classList.add('fab--open');
+          fabMain.textContent = '×';
+          // overlay
+          const ov = document.createElement('div');
+          ov.className = 'fab-dial__overlay';
+          ov.id = 'fab-overlay';
+          ov.onclick = closeDial;
+          document.querySelector('.screen').appendChild(ov);
+          fabItems.forEach((item, i) => setTimeout(() => item.classList.add('fab-dial__item--visible'), i * 50));
+        };
+        const closeDial = () => {
+          fabOpen = false;
+          fabMain.classList.remove('fab--open');
+          fabMain.textContent = '+';
+          document.getElementById('fab-overlay')?.remove();
+          fabItems.forEach(item => item.classList.remove('fab-dial__item--visible'));
+        };
+        fabMain.onclick = () => fabOpen ? closeDial() : openDial();
+        fabItems.forEach(item => {
+          item.onclick = () => {
+            closeDial();
+            const a = item.dataset.action;
+            if (a === 'turno') {
+              if (inProg) Router.go('informe-form', { informeId: inProg.id });
+              else Router.go('informe-turno');
+            } else if (a === 'ingreso') {
+              Router.go('ingresos');
+            }
+          };
         });
       },
     };
@@ -1711,15 +1775,13 @@
             ${Auth.can('settings') ? `<button class="topbar__action" id="btn-types">Tipos</button>` : '<span></span>'}
           </header>
           <div class="content content--with-fab">
-            ${Auth.can('manage_stock') ? `<button class="stock-ingreso-btn" id="btn-ingreso">📦 Ingreso de Mercadería</button>` : ''}
-            <button class="stock-ingreso-btn" id="btn-panorama" style="border-color:var(--gold);color:var(--gold)">📊 Panorama de bodega</button>
             <div class="search-bar">
               <input class="search-bar__input" id="inp-search" type="search" placeholder="Buscar vino…" autocomplete="off">
             </div>
             <div class="filter-chips">
               <button class="chip${filter==='all'?' chip--active':''}" data-f="all">Todos <span class="chip__count">${wines.length}</span></button>
               ${bajoCount > 0 ? `<button class="chip${filter==='__bajo'?' chip--active':''}" data-f="__bajo" style="${filter !== '__bajo' ? 'border-color:var(--warning);color:var(--warning)' : ''}">⚠️ Stock bajo <span class="chip__count">${bajoCount}</span></button>` : ''}
-              ${menuCount > 0 ? `<button class="chip${filter==='__menu'?' chip--active':''}" data-f="__menu">📖 Tu Menú <span class="chip__count">${menuCount}</span></button>` : ''}
+              ${menuCount > 0 ? `<button class="chip" id="chip-menu">📖 Tu Menú <span class="chip__count">${menuCount}</span></button>` : ''}
               ${types.map(t => `<button class="chip${filter===t?' chip--active':''}" data-f="${t}">${t} <span class="chip__count">${count(t)}</span></button>`).join('')}
             </div>
             ${Auth.can('settings') ? `
@@ -1732,12 +1794,25 @@
             </div>` : ''}
             <div class="wine-list" id="wine-list">${listHTML}</div>
           </div>
-          <button class="fab" id="btn-add">+</button>
+
+          <!-- FAB speed-dial -->
+          <div class="fab-dial" id="fab-dial">
+            <div class="fab-dial__items" id="fab-items">
+              ${Auth.can('manage_stock') ? `
+              <div class="fab-dial__item" data-action="ingreso">
+                <span class="fab-dial__label">Ingresar mercadería</span>
+                <button class="fab-dial__btn">📦</button>
+              </div>` : ''}
+              <div class="fab-dial__item" data-action="nuevo-vino">
+                <span class="fab-dial__label">Nuevo vino</span>
+                <button class="fab-dial__btn">🍷</button>
+              </div>
+            </div>
+            <button class="fab" id="fab-main">+</button>
+          </div>
         </div>`,
       bind() {
-        document.getElementById('btn-back').onclick    = () => Router.back();
-        document.getElementById('btn-add').onclick     = () => Router.go('wine-form', { mode: 'create' });
-        document.getElementById('btn-panorama').onclick = () => Router.go('stock-analytics');
+        document.getElementById('btn-back').onclick = () => Router.back();
 
         if (Auth.can('settings')) {
           document.getElementById('btn-types').onclick = () => Router.go('wine-types');
@@ -1749,11 +1824,11 @@
             App.render();
           };
         }
-        if (Auth.can('manage_stock')) {
-          document.getElementById('btn-ingreso').onclick = () => Router.go('ingresos');
-        }
 
-        document.querySelectorAll('.chip').forEach(c => {
+        // Chip Tu Menú → página dedicada
+        document.getElementById('chip-menu')?.addEventListener('click', () => Router.go('wine-menu'));
+
+        document.querySelectorAll('.chip[data-f]').forEach(c => {
           c.onclick = () => { Router.params.filter = c.dataset.f; App.render(); };
         });
 
@@ -1767,6 +1842,37 @@
 
         document.querySelectorAll('.wine-item').forEach(item => {
           item.onclick = () => Router.go('wine-detail', { id: item.dataset.id });
+        });
+
+        // Speed-dial
+        const fabMain  = document.getElementById('fab-main');
+        const fabItems = document.querySelectorAll('#fab-items .fab-dial__item');
+        let fabOpen = false;
+        const openDial = () => {
+          fabOpen = true;
+          fabMain.classList.add('fab--open');
+          fabMain.textContent = '×';
+          const ov = document.createElement('div');
+          ov.className = 'fab-dial__overlay'; ov.id = 'fab-overlay';
+          ov.onclick = closeDial;
+          document.querySelector('.screen').appendChild(ov);
+          fabItems.forEach((item, i) => setTimeout(() => item.classList.add('fab-dial__item--visible'), i * 50));
+        };
+        const closeDial = () => {
+          fabOpen = false;
+          fabMain.classList.remove('fab--open');
+          fabMain.textContent = '+';
+          document.getElementById('fab-overlay')?.remove();
+          fabItems.forEach(item => item.classList.remove('fab-dial__item--visible'));
+        };
+        fabMain.onclick = () => fabOpen ? closeDial() : openDial();
+        fabItems.forEach(item => {
+          item.onclick = () => {
+            closeDial();
+            const a = item.dataset.action;
+            if (a === 'nuevo-vino') Router.go('wine-form', { mode: 'create' });
+            else if (a === 'ingreso') Router.go('ingresos');
+          };
         });
       },
     };
@@ -1906,6 +2012,22 @@
                 </label>
               </div>
 
+              <!-- POR COPA -->
+              <div class="field stock-toggle-field">
+                <label class="toggle-label">
+                  <input type="checkbox" id="chk-copa" class="toggle-check" ${v.porCopa ? 'checked' : ''}>
+                  <span class="toggle-switch"></span>
+                  <span class="toggle-text">Se vende por copa 🥂</span>
+                </label>
+              </div>
+              <div class="field ${v.porCopa ? '' : 'hidden'}" id="f-copa-precio">
+                <label class="field__label">Precio por copa</label>
+                <div class="field__prefix-wrap">
+                  <span class="field__prefix">$</span>
+                  <input class="field__input field__input--prefixed" id="inp-precio-copa" type="number" inputmode="numeric" min="0" value="${v.precioCopa || ''}">
+                </div>
+              </div>
+
               ${!isEdit ? `
               <!-- STOCK INICIAL (solo al crear) -->
               <div class="field stock-toggle-field">
@@ -2036,6 +2158,11 @@
           Toast.success(`"${label}" creado y asignado`);
         };
 
+        // ── Toggle por copa ───────────────────────────────────────
+        document.getElementById('chk-copa').onchange = e => {
+          document.getElementById('f-copa-precio').classList.toggle('hidden', !e.target.checked);
+        };
+
         // ── Toggle stock inicial + cajas ──────────────────────────
         if (!isEdit) {
           document.getElementById('chk-stock').onchange = e => {
@@ -2144,6 +2271,8 @@
               costo:       Number(data.costo),
               proveedorId: document.getElementById('inp-proveedor').value || null,
               enMenu:      document.getElementById('chk-menu').checked,
+              porCopa:     document.getElementById('chk-copa').checked,
+              precioCopa:  document.getElementById('chk-copa').checked ? (Number(document.getElementById('inp-precio-copa').value) || null) : null,
             };
             if (canPrice) update.precio_carta = Number(data.precio_carta);
             DB.updateWine(id, update);
@@ -2167,6 +2296,8 @@
               precio_carta: Number(data.precio_carta) || 0,
               proveedorId:  document.getElementById('inp-proveedor').value || null,
               enMenu:       document.getElementById('chk-menu').checked,
+              porCopa:      document.getElementById('chk-copa').checked,
+              precioCopa:   document.getElementById('chk-copa').checked ? (Number(document.getElementById('inp-precio-copa').value) || null) : null,
               stock_actual: stockQty,
               activo:       true,
               createdAt:    now(),
@@ -2561,6 +2692,7 @@
      PAGE: VENTAS — REPORTES
   ═══════════════════════════════════════════════════════════════════ */
   function pageVentasReportes() {
+    const tab      = Router.params.rTab    || 'ventas';
     const periodo  = Router.params.rPeriodo || 'mes';
     const desdeStr = Router.params.rDesde   || '';
     const hastaStr = Router.params.rHasta   || '';
@@ -2573,6 +2705,29 @@
     const mediodias  = filtered.filter(i => i.turno === 'mediodia').length;
     const noches     = filtered.filter(i => i.turno === 'noche').length;
     const promTurno  = filtered.length ? Math.round(totalBotellas / filtered.length) : 0;
+
+    // ── Compras (ingresos) ────────────────────────────────────────
+    const allIngresos = DB.getIngresos().filter(i => i.estado === 'confirmado');
+    const ingFilt     = allIngresos.filter(i => {
+      const d = new Date(i.confirmedAt || i.fecha);
+      return d >= desde && d <= hasta;
+    });
+    const totalCompras = ingFilt.reduce((s, i) => s + (i.items || []).reduce((a, x) => a + (x.precioUnitario || 0) * x.cantidad, 0), 0);
+    const comprasByProv = {};
+    ingFilt.forEach(i => {
+      const provId = i.proveedorId || '__sin__';
+      if (!comprasByProv[provId]) comprasByProv[provId] = { total: 0, ingresos: 0 };
+      comprasByProv[provId].total    += (i.items || []).reduce((a, x) => a + (x.precioUnitario || 0) * x.cantidad, 0);
+      comprasByProv[provId].ingresos += 1;
+    });
+    const topProvCompras = Object.entries(comprasByProv)
+      .sort((a, b) => b[1].total - a[1].total)
+      .slice(0, 8)
+      .map(([provId, d]) => {
+        const p = proveedores.find(p => p.id === provId);
+        return { nombre: p ? (p.nombre_fantasia || p.nombre) : 'Sin proveedor', ...d };
+      });
+    const maxCompra = topProvCompras.length ? topProvCompras[0].total : 1;
 
     // Por tipo: barras proporcionales
     const maxTipo = Math.max(...Object.values(porTipo), 1);
@@ -2639,6 +2794,12 @@
           </header>
           <div class="content">
 
+            <!-- Tabs Ventas / Compras -->
+            <div style="display:flex;gap:0;margin-bottom:16px;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden">
+              <button id="tab-ventas" style="flex:1;padding:10px;font-size:13px;font-weight:600;background:${tab==='ventas'?'var(--primary)':'var(--surface)'};color:${tab==='ventas'?'#fff':'var(--text-2)'};transition:background .15s">📋 Ventas</button>
+              <button id="tab-compras" style="flex:1;padding:10px;font-size:13px;font-weight:600;background:${tab==='compras'?'var(--primary)':'var(--surface)'};color:${tab==='compras'?'#fff':'var(--text-2)'};border-left:1px solid var(--border);transition:background .15s">📦 Compras</button>
+            </div>
+
             <!-- Selector de período -->
             <div class="filter-chips periodo-chips">
               <button class="chip${periodo==='7d'?' chip--active':''}" data-p="7d">7 días</button>
@@ -2661,7 +2822,8 @@
               </div>
             </div>` : ''}
 
-            <!-- Stats principales -->
+            ${tab === 'ventas' ? `
+            <!-- Stats principales Ventas -->
             <div class="report-stats">
               <div class="report-stat">
                 <div class="report-stat__val">${totalBotellas}</div>
@@ -2698,29 +2860,85 @@
               </div>
             </div>` : ''}
 
-            <!-- Por tipo de vino -->
             <section class="section">
               <h3 class="section__title">Por tipo de vino</h3>
               ${porTipoHTML}
             </section>
-
-            <!-- Ranking de vinos -->
             <section class="section">
               <h3 class="section__title">Top vinos vendidos</h3>
               ${topVinosHTML}
             </section>
-
-            <!-- Por proveedor -->
             <section class="section">
               <h3 class="section__title">Por proveedor</h3>
               ${coverageText ? `<p style="font-size:12px;color:var(--text-muted);margin:0 0 10px">${coverageText}</p>` : ''}
               ${porProvHTML}
             </section>
+            ` : `
+
+            <!-- TAB COMPRAS -->
+            <div class="report-stats">
+              <div class="report-stat">
+                <div class="report-stat__val">${ingFilt.length}</div>
+                <div class="report-stat__label">Ingresos</div>
+              </div>
+              <div class="report-stat">
+                <div class="report-stat__val">${ingFilt.reduce((s,i) => s+(i.items||[]).reduce((a,x)=>a+x.cantidad,0),0)}</div>
+                <div class="report-stat__label">Botellas</div>
+              </div>
+              <div class="report-stat">
+                <div class="report-stat__val">${Object.keys(comprasByProv).length}</div>
+                <div class="report-stat__label">Proveedores</div>
+              </div>
+            </div>
+
+            ${totalCompras > 0 ? `
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted)">Total en compras</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:1px">Costo de mercadería ingresada</div>
+              </div>
+              <div style="font-size:22px;font-weight:800;color:var(--gold-light)">${fmtCurrency(totalCompras)}</div>
+            </div>` : ''}
+
+            <section class="section">
+              <h3 class="section__title">Por proveedor</h3>
+              ${topProvCompras.length ? topProvCompras.map(p => `
+                <div class="report-bar-row">
+                  <div class="report-bar-row__header">
+                    <span style="font-size:13px;font-weight:600">${escHtml(p.nombre)}</span>
+                    <span class="report-bar-row__val">${fmtCurrency(p.total)}</span>
+                  </div>
+                  <div class="report-bar-track">
+                    <div class="report-bar-fill" style="background:var(--primary);width:${Math.round(p.total/maxCompra*100)}%;opacity:0.85"></div>
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${p.ingresos} ingreso${p.ingresos!==1?'s':''}</div>
+                </div>`).join('')
+              : `<p class="report-empty">Sin compras en este período</p>`}
+            </section>
+
+            ${ingFilt.length ? `
+            <section class="section">
+              <h3 class="section__title">Últimos ingresos</h3>
+              ${ingFilt.slice().sort((a,b)=>new Date(b.confirmedAt||b.fecha)-new Date(a.confirmedAt||a.fecha)).slice(0,10).map(i => {
+                const p = proveedores.find(p=>p.id===i.proveedorId);
+                const total = (i.items||[]).reduce((a,x)=>a+(x.precioUnitario||0)*x.cantidad,0);
+                return `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--surface-3)">
+                  <div>
+                    <div style="font-size:13px;font-weight:600">${p ? escHtml(p.nombre_fantasia||p.nombre) : 'Sin proveedor'}</div>
+                    <div style="font-size:11px;color:var(--text-muted)">${fmtDate(i.confirmedAt||i.fecha)} · ${(i.items||[]).reduce((a,x)=>a+x.cantidad,0)} bot.</div>
+                  </div>
+                  <div style="font-size:13px;font-weight:700;color:var(--gold)">${fmtCurrency(total)}</div>
+                </div>`;
+              }).join('')}
+            </section>` : ''}
+            `}
 
           </div>
         </div>`,
       bind() {
         document.getElementById('btn-back').onclick = () => Router.back();
+        document.getElementById('tab-ventas').onclick  = () => { Router.params.rTab = 'ventas';  App.render(); };
+        document.getElementById('tab-compras').onclick = () => { Router.params.rTab = 'compras'; App.render(); };
 
         document.querySelectorAll('[data-p]').forEach(c => {
           c.onclick = () => { Router.params.rPeriodo = c.dataset.p; App.render(); };
@@ -4733,6 +4951,159 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════
+     PAGE: WINE MENU — Tu Menú
+  ═══════════════════════════════════════════════════════════════════ */
+  function pageWineMenu() {
+    const allWines  = DB.getWines().filter(w => w.activo !== false);
+    const menuWines = allWines.filter(w => w.enMenu);
+    const types     = DB.getWineTypes();
+    const COLORS    = ['#8B1C2E','#C9A84C','#4A9460','#4A70B0','#9B4490','#C08030','#2A8090','#C05060'];
+
+    // ── Composición por tipo ──────────────────────────────────────
+    const byTipo = {};
+    menuWines.forEach(w => {
+      const t = w.tipo || 'Sin tipo';
+      if (!byTipo[t]) byTipo[t] = 0;
+      byTipo[t]++;
+    });
+    const tipoEntries = Object.entries(byTipo).sort((a, b) => b[1] - a[1]);
+    const total       = menuWines.length;
+
+    // Donut reutilizable (igual que en pageStockAnalytics)
+    const C = 2 * Math.PI * 38;
+    const renderDonut = (segs, cLabel, cSub) => {
+      const tot = segs.reduce((s, g) => s + g.value, 0);
+      if (!tot) return `<svg viewBox="0 0 100 100" style="width:130px;height:130px;flex-shrink:0"><circle cx="50" cy="50" r="38" fill="none" stroke="var(--surface-3)" stroke-width="12"/></svg>`;
+      let acc = 0;
+      const arcs = segs.map(s => { const len=(s.value/tot)*C; const a={...s,len,off:acc}; acc+=len; return a; });
+      const fs = cLabel.length > 4 ? '9' : '11';
+      return `<svg viewBox="0 0 100 100" style="transform:rotate(-90deg);width:130px;height:130px;flex-shrink:0">
+        ${arcs.map(a=>`<circle cx="50" cy="50" r="38" fill="none" stroke="${a.color}" stroke-width="12"
+          stroke-dasharray="${a.len.toFixed(2)} ${C.toFixed(2)}" stroke-dashoffset="${(-a.off).toFixed(2)}"/>`).join('')}
+        <circle cx="50" cy="50" r="27" fill="var(--surface-2)"/>
+        <g transform="rotate(90,50,50)">
+          <text x="50" y="${cSub?'46':'53'}" text-anchor="middle" fill="var(--text)" font-size="${fs}" font-weight="700" font-family="sans-serif">${cLabel}</text>
+          ${cSub?`<text x="50" y="57" text-anchor="middle" fill="var(--text-2)" font-size="7" font-family="sans-serif">${cSub}</text>`:''}
+        </g>
+      </svg>`;
+    };
+
+    const tipoSegs = tipoEntries.map(([label, val], i) => ({ label, value: val, color: COLORS[i % COLORS.length] }));
+
+    // ── Vinos por copa ────────────────────────────────────────────
+    const copaWines   = menuWines.filter(w => w.porCopa);
+    const copaSegs    = copaWines.length
+      ? (() => {
+          const ct = {}; copaWines.forEach(w => { const t=w.tipo||'Sin tipo'; ct[t]=(ct[t]||0)+1; });
+          return Object.entries(ct).sort((a,b)=>b[1]-a[1]).map(([l,v],i)=>({ label:l, value:v, color:COLORS[i%COLORS.length] }));
+        })() : [];
+
+    // ── Lista agrupada por tipo ───────────────────────────────────
+    const groupedHTML = types
+      .filter(t => byTipo[t] > 0)
+      .map(t => {
+        const group = menuWines.filter(w => w.tipo === t);
+        return `
+          <div style="margin-bottom:20px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              ${typeBadge(t)}
+              <span style="font-size:12px;color:var(--text-muted)">${group.length} vino${group.length!==1?'s':''}</span>
+            </div>
+            ${group.map(w => `
+              <button class="wine-item" data-id="${w.id}" style="${w.porCopa?'border-left:3px solid var(--gold)':''}">
+                <div class="wine-item__main">
+                  <div class="wine-item__name">${escHtml(w.nombre)} <span class="wine-item__anada">${w.añada||''}</span></div>
+                  <div style="display:flex;gap:5px;align-items:center">
+                    ${w.porCopa ? `<span style="font-size:10px;font-weight:700;color:var(--gold)">🥂 Copa</span>` : ''}
+                    ${(w.stock_actual||0) <= (DB.getSetup().stockBajo??3) ? `<span style="font-size:10px;color:var(--warning)">⚠️</span>` : ''}
+                  </div>
+                </div>
+                <div class="wine-item__meta">
+                  <span class="wine-item__stock${!w.stock_actual?' wine-item__stock--zero':''}">${w.stock_actual||0} bot.</span>
+                  ${w.porCopa && w.precioCopa ? `<span style="font-size:11px;color:var(--gold)">${fmtCurrency(w.precioCopa)}/copa</span>` : `<span class="wine-item__price">${fmtCurrency(w.precio_carta)}</span>`}
+                </div>
+              </button>`).join('')}
+          </div>`;
+      }).join('');
+
+    return {
+      html: `
+        <div class="screen">
+          <header class="topbar">
+            <button class="topbar__back" id="btn-back">←</button>
+            <span class="topbar__title">Tu Menú</span>
+            <span></span>
+          </header>
+          <div class="content">
+
+            ${!menuWines.length ? `
+            <div class="empty-state" style="padding-top:40px">
+              <p style="font-size:32px;margin-bottom:12px">📖</p>
+              <p style="font-size:15px;font-weight:600;margin-bottom:8px">El menú está vacío</p>
+              <p style="font-size:13px;color:var(--text-muted)">Marcá vinos con "En Menú" desde el detalle de cada vino para que aparezcan aquí.</p>
+            </div>` : `
+
+            <!-- Composición -->
+            <div class="card" style="margin-bottom:16px">
+              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">Composición del menú · ${total} etiquetas</div>
+              <div style="display:flex;gap:14px;align-items:center">
+                ${renderDonut(tipoSegs, `${total}`, total===1?'vino':'vinos')}
+                <div style="flex:1;min-width:0">
+                  ${tipoEntries.map(([t, n], i) => `
+                    <div style="display:flex;align-items:center;gap:7px;margin-bottom:7px">
+                      <div style="width:9px;height:9px;border-radius:50%;background:${COLORS[i%COLORS.length]};flex-shrink:0"></div>
+                      <div style="flex:1;min-width:0">
+                        <div style="font-size:12px;font-weight:600">${t}</div>
+                        <div style="font-size:10px;color:var(--text-2)">${n} vino${n!==1?'s':''} · ${Math.round(n/total*100)}%</div>
+                      </div>
+                    </div>`).join('')}
+                </div>
+              </div>
+            </div>
+
+            <!-- Vinos por copa -->
+            <div class="card" style="margin-bottom:16px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                <div style="font-size:13px;font-weight:700">🥂 Vinos por copa</div>
+                <span style="font-size:12px;color:var(--text-muted)">${copaWines.length} de ${total}</span>
+              </div>
+              ${copaWines.length ? `
+              <div style="display:flex;gap:14px;align-items:center;margin-bottom:12px">
+                ${renderDonut(copaSegs, `${copaWines.length}`, 'por copa')}
+                <div style="flex:1;min-width:0">
+                  ${copaWines.slice(0,5).map(w => `
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--surface-3)">
+                      <div style="flex:1;min-width:0;overflow:hidden">
+                        <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(w.nombre)}</div>
+                        <div style="font-size:10px;color:var(--text-muted)">${w.añada||''}</div>
+                      </div>
+                      ${w.precioCopa ? `<span style="font-size:12px;color:var(--gold);font-weight:600;white-space:nowrap;margin-left:6px">${fmtCurrency(w.precioCopa)}</span>` : `<span style="font-size:10px;color:var(--text-muted);margin-left:6px">sin precio</span>`}
+                    </div>`).join('')}
+                  ${copaWines.length>5?`<div style="font-size:11px;color:var(--text-muted);padding-top:5px">… y ${copaWines.length-5} más</div>`:''}
+                </div>
+              </div>` : `
+              <div style="font-size:13px;color:var(--text-muted);padding:8px 0">
+                Ningún vino marcado como "por copa" aún. Podés activarlo desde el detalle de cada vino.
+              </div>`}
+            </div>
+
+            <!-- Lista completa -->
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Lista completa del menú</div>
+            ${groupedHTML}
+            `}
+
+          </div>
+        </div>`,
+      bind() {
+        document.getElementById('btn-back').onclick = () => Router.back();
+        document.querySelectorAll('.wine-item').forEach(item => {
+          item.onclick = () => Router.go('wine-detail', { id: item.dataset.id });
+        });
+      },
+    };
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
      PAGE: STOCK ANALYTICS — Panorama de bodega
   ═══════════════════════════════════════════════════════════════════ */
   function pageStockAnalytics() {
@@ -5600,6 +5971,7 @@
         'user-profile':      pageUserProfile,
         team:                pageTeam,
         'user-form':         pageUserForm,
+        'wine-menu':         pageWineMenu,
         'stock-analytics':   pageStockAnalytics,
         'import-wines':      pageImportWines,
         'import-stock':      pageImportStock,
