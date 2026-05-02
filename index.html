@@ -4422,7 +4422,8 @@
       { id: 'stock-bajo', icon: '⚠️', title: 'Umbral de stock bajo',    sub: `Actualmente: ${STOCK_BAJO} botellas`,                     perm: 'settings' },
       { id: 'restaurant', icon: '🏠', title: 'Datos del restaurante',   sub: setup.restaurantName || '—',                               perm: 'settings' },
       { id: 'export',     icon: '💾', title: 'Exportar datos',          sub: 'Backup completo en JSON',                                 perm: 'settings' },
-      { id: 'import',     icon: '📥', title: 'Importar carta (CSV)',     sub: 'Carga masiva de vinos desde planilla',                    perm: 'settings' },
+      { id: 'import',     icon: '📥', title: 'Importar carta (CSV)',       sub: 'Carga masiva de vinos desde planilla',                    perm: 'settings' },
+      { id: 'import-stock', icon: '📊', title: 'Actualizar stock masivo',  sub: `Descargá el inventario, editá los números y reimportá`,   perm: 'settings' },
       { id: 'turnos',     icon: '🕐', title: 'Configurar turnos',        sub: 'Próximamente',                                            perm: 'settings', soon: true },
       { id: 'notif',      icon: '🔔', title: 'Alertas de stock',        sub: 'Próximamente',                                            perm: 'settings', soon: true },
       { id: 'carta',      icon: '📖', title: 'Carta digital',           sub: 'Próximamente',                                            perm: 'settings', soon: true },
@@ -4501,6 +4502,7 @@
               Toast.success('Backup descargado');
             }
             else if (id === 'import') Router.go('import-wines');
+            else if (id === 'import-stock') Router.go('import-stock');
           };
         });
 
@@ -5047,6 +5049,302 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════
+     PAGE: IMPORT STOCK (actualización masiva de stock)
+  ═══════════════════════════════════════════════════════════════════ */
+  function pageImportStock() {
+
+    // ── CSV parser (mismo patrón que pageImportWines) ────────────
+    const parseCSV = text => {
+      const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+      const nonEmpty = lines.filter(l => l.trim());
+      if (nonEmpty.length < 2) return [];
+
+      const parseLine = line => {
+        const res = []; let cur = '', inQ = false;
+        for (const ch of line) {
+          if (ch === '"') { inQ = !inQ; }
+          else if (ch === ',' && !inQ) { res.push(cur.trim()); cur = ''; }
+          else { cur += ch; }
+        }
+        res.push(cur.trim());
+        return res.map(v => v.replace(/^"|"$/g, '').trim());
+      };
+
+      const rawH = parseLine(nonEmpty[0].replace(/^﻿/, '')); // strip BOM
+      const H    = rawH.map(h => h.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '_'));
+
+      const find = (...keys) => H.findIndex(h => keys.some(k => h.includes(k)));
+      const cols = {
+        nombre:      find('nombre','name','vino','wine'),
+        anada:       find('anada','a_ada','vintage','year','a_o'),
+        stockActual: find('stock_actual','stock_vigente','stock_db','actual'),
+        stockNuevo:  find('stock_nuevo','nuevo','new_stock','stock_n'),
+      };
+
+      return nonEmpty.slice(1).map((line, i) => {
+        const v = parseLine(line);
+        const g = k => cols[k] >= 0 ? (v[cols[k]] || '') : '';
+        const nombre = g('nombre').trim();
+        if (!nombre) return null;
+        const stockNuevoRaw = g('stockNuevo').trim();
+        return {
+          rowNum:     i + 2,
+          nombre,
+          añada:      g('anada').trim() || '',
+          stockNuevo: stockNuevoRaw === '' ? null : Math.max(0, parseInt(stockNuevoRaw) || 0),
+        };
+      }).filter(Boolean);
+    };
+
+    // ── Generar template CSV con stock actual ─────────────────────
+    const buildTemplateCSV = () => {
+      const wines = DB.getWines().filter(w => w.activo !== false);
+      const rows  = wines.map(w => {
+        const nombre = `"${(w.nombre || '').replace(/"/g, '""')}"`;
+        const anada  = w.añada || 'S/A';
+        const sa     = w.stock_actual || 0;
+        return `${nombre},${anada},${sa},${sa}`;
+      });
+      return 'nombre,añada,stock_actual,stock_nuevo\n' + rows.join('\n');
+    };
+
+    return {
+      html: `
+        <div class="screen">
+          <header class="topbar">
+            <button class="topbar__back" id="btn-back">←</button>
+            <span class="topbar__title">Actualizar stock</span>
+            <span></span>
+          </header>
+          <div class="content">
+
+            <!-- PASO 1: UPLOAD -->
+            <div id="step-upload">
+              <div class="card" style="margin-bottom:16px">
+                <div style="font-size:14px;font-weight:600;margin-bottom:8px">¿Cómo funciona?</div>
+                <div style="font-size:13px;color:var(--text-2);line-height:1.6;margin-bottom:12px">
+                  Descargá el inventario con el stock actual, editá la columna <strong style="color:var(--gold)">stock_nuevo</strong> y reimportá. Solo se actualizan las filas que cambiaron.
+                </div>
+                <div style="background:var(--surface-3);border-radius:var(--radius-sm);padding:10px;font-size:11px;font-family:monospace;color:var(--gold);overflow-x:auto;white-space:nowrap">
+                  nombre, añada, stock_actual, stock_nuevo
+                </div>
+                <div style="margin-top:10px;font-size:12px;color:var(--text-muted)">
+                  No modifiques las columnas <em>nombre</em> ni <em>añada</em> — se usan para identificar cada vino.
+                </div>
+              </div>
+
+              <button class="btn btn--outline btn--full" id="btn-template-stock" style="margin-bottom:16px">
+                ⬇ Descargar inventario actual (.csv)
+              </button>
+
+              <div id="drop-zone-stock" style="border:2px dashed var(--border-light);border-radius:var(--radius-lg);padding:36px 16px;text-align:center;transition:border-color .2s">
+                <div style="font-size:40px;margin-bottom:8px">📊</div>
+                <div style="font-size:14px;color:var(--text-2);margin-bottom:4px">Arrastrá tu CSV actualizado</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:16px">o hacé click para elegir</div>
+                <label class="btn btn--primary" style="cursor:pointer;display:inline-block">
+                  Elegir archivo
+                  <input type="file" id="inp-csv-stock" accept=".csv,text/csv,text/plain" style="display:none">
+                </label>
+                <div id="file-name-stock" style="margin-top:10px;font-size:12px;color:var(--gold)"></div>
+              </div>
+            </div>
+
+            <!-- PASO 2: PREVIEW -->
+            <div id="step-preview-stock" style="display:none">
+              <div id="preview-summary-stock" style="margin-bottom:12px"></div>
+              <div id="preview-list-stock" style="margin-bottom:16px"></div>
+              <div style="display:flex;gap:8px;position:sticky;bottom:0;background:var(--bg);padding:12px 0">
+                <button class="btn btn--outline" id="btn-back-upload-stock" style="flex:1">← Volver</button>
+                <button class="btn btn--primary" id="btn-confirm-stock" style="flex:2">Aplicar →</button>
+              </div>
+            </div>
+
+          </div>
+        </div>`,
+
+      bind() {
+        document.getElementById('btn-back').onclick = () => Router.back();
+
+        // ── Descargar inventario actual ───────────────────────────
+        document.getElementById('btn-template-stock').onclick = () => {
+          const csv = buildTemplateCSV();
+          const a = document.createElement('a');
+          a.href     = 'data:text/csv;charset=utf-8,' + encodeURIComponent('﻿' + csv);
+          a.download = `inventario-stock-${new Date().toISOString().slice(0,10)}.csv`;
+          a.click();
+          Toast.info('Editá la columna stock_nuevo en Excel o Google Sheets y reimportá el archivo');
+        };
+
+        // ── Drag & drop ──────────────────────────────────────────
+        const dropZone = document.getElementById('drop-zone-stock');
+        dropZone.ondragover  = e => { e.preventDefault(); dropZone.style.borderColor = 'var(--gold)'; };
+        dropZone.ondragleave = () => { dropZone.style.borderColor = ''; };
+        dropZone.ondrop      = e => {
+          e.preventDefault();
+          dropZone.style.borderColor = '';
+          const file = e.dataTransfer.files[0];
+          if (file) processFile(file);
+        };
+
+        // ── File input ───────────────────────────────────────────
+        document.getElementById('inp-csv-stock').onchange = function() {
+          if (this.files[0]) processFile(this.files[0]);
+        };
+
+        document.getElementById('btn-back-upload-stock').onclick = () => {
+          document.getElementById('step-preview-stock').style.display = 'none';
+          document.getElementById('step-upload').style.display = '';
+        };
+
+        // ── Procesar archivo ─────────────────────────────────────
+        const processFile = file => {
+          document.getElementById('file-name-stock').textContent = '⏳ Leyendo ' + file.name + '…';
+          const reader = new FileReader();
+          reader.onload = e => {
+            try {
+              const rows = parseCSV(e.target.result);
+              if (!rows.length) { Toast.error('El archivo está vacío o el formato no es correcto'); return; }
+              showPreview(rows, file.name);
+            } catch (err) {
+              Toast.error('Error al leer el archivo');
+            }
+          };
+          reader.readAsText(file, 'UTF-8');
+        };
+
+        // ── Preview ───────────────────────────────────────────────
+        const showPreview = (rows, fileName) => {
+          const wines = DB.getWines().filter(w => w.activo !== false);
+
+          // Intentar matchear cada fila con un vino por normalize(nombre)+añada
+          const matched   = [];
+          const unmatched = [];
+
+          rows.forEach(r => {
+            const normR   = normalize(r.nombre);
+            const añadaR  = String(r.añada || '').trim();
+            let wine = wines.find(w =>
+              normalize(w.nombre) === normR &&
+              String(w.añada || '').trim() === añadaR
+            );
+            // fallback: solo nombre si no hay columna añada o sin coincidencia exacta
+            if (!wine && !añadaR) {
+              wine = wines.find(w => normalize(w.nombre) === normR);
+            }
+
+            if (!wine) { unmatched.push(r); return; }
+
+            const stockActual = wine.stock_actual || 0;
+            const stockNuevo  = r.stockNuevo;
+            const delta       = stockNuevo !== null ? stockNuevo - stockActual : 0;
+            matched.push({ ...r, wineId: wine.id, wineName: wine.nombre, wineTipo: wine.tipo, stockActual, stockNuevo, delta });
+          });
+
+          const changes  = matched.filter(r => r.stockNuevo !== null && r.delta !== 0);
+          const noChange = matched.filter(r => r.stockNuevo === null || r.delta === 0);
+
+          document.getElementById('step-upload').style.display      = 'none';
+          document.getElementById('step-preview-stock').style.display = '';
+
+          document.getElementById('preview-summary-stock').innerHTML = `
+            <div class="card">
+              <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px">${fileName}</div>
+              <div style="font-size:16px;font-weight:700;margin-bottom:12px">${rows.length} filas procesadas</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px">
+                ${changes.length
+                  ? `<span style="background:var(--success-bg);color:var(--success);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600">📦 ${changes.length} con cambios</span>`
+                  : ''}
+                ${noChange.length
+                  ? `<span style="background:var(--surface-3);color:var(--text-2);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600">— ${noChange.length} sin cambios</span>`
+                  : ''}
+                ${unmatched.length
+                  ? `<span style="background:var(--error-bg);color:var(--error);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600">✗ ${unmatched.length} no encontrados</span>`
+                  : ''}
+              </div>
+              ${!changes.length ? '<div style="margin-top:10px;font-size:13px;color:var(--text-2)">No hay cambios de stock para aplicar.</div>' : ''}
+              ${unmatched.length
+                ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted)">Los vinos no encontrados se omiten. Revisá que nombre y añada coincidan exactamente con el sistema.</div>`
+                : ''}
+            </div>`;
+
+          // Lista de cambios
+          const toShow = [...changes, ...noChange].slice(0, 20);
+          document.getElementById('preview-list-stock').innerHTML =
+            (toShow.length ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Vista previa${matched.length > 20 ? ` (primeros 20 de ${matched.length})` : ''}:</div>` : '') +
+            toShow.map(r => {
+              const hasChange = r.delta !== 0;
+              const isInc     = r.delta > 0;
+              const borderCol = hasChange ? (isInc ? 'var(--success)' : 'var(--error)') : 'var(--border)';
+              const deltaStr  = hasChange
+                ? `<span style="color:${isInc ? 'var(--success)' : 'var(--error)'};font-weight:700">${isInc ? '+' : ''}${r.delta}</span>`
+                : `<span style="color:var(--text-muted)">sin cambio</span>`;
+              return `
+              <div style="border:1px solid ${borderCol};border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:6px;background:var(--surface-2)">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+                  <div style="flex:1;min-width:0">
+                    <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                      ${escHtml(r.wineName)} <span style="color:var(--text-muted);font-weight:400">${r.añada || 'S/A'}</span>
+                    </div>
+                    <div style="font-size:12px;color:var(--text-2);margin-top:2px">
+                      ${r.stockActual} bot. →
+                      <strong style="color:${hasChange ? (isInc ? 'var(--success)' : 'var(--error)') : 'var(--text-2)'}">
+                        ${r.stockNuevo !== null ? r.stockNuevo : r.stockActual} bot.
+                      </strong>
+                      · ${deltaStr}
+                    </div>
+                  </div>
+                  ${hasChange
+                    ? `<span style="font-size:11px;font-weight:600;color:${isInc ? 'var(--success)' : 'var(--error)'};background:${isInc ? 'var(--success-bg)' : 'var(--error-bg)'};padding:3px 9px;border-radius:20px;white-space:nowrap">
+                        ${isInc ? '▲' : '▼'} ${Math.abs(r.delta)}
+                      </span>`
+                    : `<span style="font-size:11px;color:var(--text-muted);padding:3px 9px">—</span>`}
+                </div>
+              </div>`;
+            }).join('') +
+            (unmatched.length ? `
+              <div style="font-size:12px;color:var(--text-muted);margin:12px 0 6px">No encontrados:</div>
+              ${unmatched.slice(0, 5).map(r => `
+                <div style="border:1px solid var(--error);border-radius:var(--radius-sm);padding:8px 12px;margin-bottom:4px;background:var(--error-bg)">
+                  <div style="font-size:13px;font-weight:600">${escHtml(r.nombre)} <span style="color:var(--text-muted);font-weight:400">${r.añada || ''}</span></div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:2px">✗ No coincide con ningún vino del sistema</div>
+                </div>`).join('')}
+              ${unmatched.length > 5 ? `<div style="text-align:center;font-size:12px;color:var(--text-muted);padding:6px">… y ${unmatched.length - 5} más</div>` : ''}
+            ` : '');
+
+          const btnConfirm = document.getElementById('btn-confirm-stock');
+          if (changes.length) {
+            btnConfirm.textContent = `Aplicar ${changes.length} cambio${changes.length !== 1 ? 's' : ''} →`;
+            btnConfirm.disabled = false;
+          } else {
+            btnConfirm.textContent = 'Sin cambios para aplicar';
+            btnConfirm.disabled = true;
+          }
+
+          btnConfirm.onclick = () => {
+            let updated = 0;
+            const ts = now();
+            changes.forEach(r => {
+              DB.updateWine(r.wineId, { stock_actual: r.stockNuevo });
+              DB.addMovement({
+                wineId:    r.wineId,
+                tipo:      'ajuste',
+                cantidad:  Math.abs(r.delta),
+                userId:    Auth.user.id,
+                userName:  Auth.user.nombre,
+                nota:      `Actualización masiva de stock (${r.delta > 0 ? '+' : ''}${r.delta} bot.)`,
+                createdAt: ts,
+              });
+              updated++;
+            });
+            Toast.success(`${updated} vino${updated !== 1 ? 's' : ''} actualizado${updated !== 1 ? 's' : ''}`);
+            Router.replace('stock');
+          };
+        };
+      },
+    };
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
      APP
   ═══════════════════════════════════════════════════════════════════ */
   const App = {
@@ -5079,6 +5377,7 @@
         team:                pageTeam,
         'user-form':         pageUserForm,
         'import-wines':      pageImportWines,
+        'import-stock':      pageImportStock,
       };
       const fn   = pages[Router.current] || pageDashboard;
       const view = fn();
