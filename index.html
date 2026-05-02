@@ -1626,10 +1626,10 @@
                 <span class="module-card__name">Manejo de stock</span>
                 <span class="module-card__count">${wines.length} etiquetas</span>
               </button>
-              <button class="module-card module-card--active" data-go="ventas">
+              <button class="module-card module-card--active" id="btn-cargar-turno">
                 <span class="module-card__icon">📋</span>
-                <span class="module-card__name">Ventas</span>
-                <span class="module-card__count">${inProg ? '⚡ En progreso' : infHoy ? `${infHoy} hoy` : 'Ver historial'}</span>
+                <span class="module-card__name">Cargar turno</span>
+                <span class="module-card__count">${inProg ? '⚡ Turno en progreso' : infHoy ? `${infHoy} turno${infHoy!==1?'s':''} hoy` : 'Nuevo turno'}</span>
               </button>
               <button class="module-card module-card--active" data-go="stock-analytics">
                 <span class="module-card__icon">📊</span>
@@ -1665,11 +1665,10 @@
                 <span class="fab-dial__label">Ingresar mercadería</span>
                 <button class="fab-dial__btn">📦</button>
               </div>` : ''}
-              ${Auth.can('close_shift') ? `
-              <div class="fab-dial__item" data-action="turno">
-                <span class="fab-dial__label">${inProg ? 'Continuar turno' : 'Cargar turno'}</span>
-                <button class="fab-dial__btn">📋</button>
-              </div>` : ''}
+              <div class="fab-dial__item" data-action="panorama">
+                <span class="fab-dial__label">Panorama de bodega</span>
+                <button class="fab-dial__btn">📊</button>
+              </div>
             </div>
             <button class="fab" id="fab-main">+</button>
           </div>
@@ -1678,7 +1677,6 @@
         document.getElementById('btn-logout').onclick = () => { Auth.logout(); Router.replace('login'); };
         const goMap = {
           'stock':           'stock',
-          'ventas':          'ventas',
           'proveedores':     'proveedores',
           'ventas-reportes': 'ventas-reportes',
           'settings':        'settings',
@@ -1688,6 +1686,15 @@
           const dest = goMap[btn.dataset.go];
           if (dest) btn.onclick = () => Router.go(dest);
         });
+
+        // Cargar turno: lógica directa sin hub
+        document.getElementById('btn-cargar-turno').onclick = () => {
+          const enProg    = DB.getInformeEnProgreso();
+          const enPreview = DB.getInformes().find(i => i.estado === 'preview');
+          if (enProg)    Router.go('informe-form',    { informeId: enProg.id });
+          else if (enPreview) Router.go('informe-preview', { informeId: enPreview.id });
+          else           Router.go('informe-turno');
+        };
 
         // Speed-dial
         const fabMain  = document.getElementById('fab-main');
@@ -1717,12 +1724,8 @@
           item.onclick = () => {
             closeDial();
             const a = item.dataset.action;
-            if (a === 'turno') {
-              if (inProg) Router.go('informe-form', { informeId: inProg.id });
-              else Router.go('informe-turno');
-            } else if (a === 'ingreso') {
-              Router.go('ingresos');
-            }
+            if (a === 'ingreso')  Router.go('ingresos');
+            else if (a === 'panorama') Router.go('stock-analytics');
           };
         });
       },
@@ -2707,9 +2710,15 @@
     const promTurno  = filtered.length ? Math.round(totalBotellas / filtered.length) : 0;
 
     // ── Compras (ingresos) ────────────────────────────────────────
+    // confirmadoEn = timestamp de confirmación del ingreso (no confundir con confirmedAt de informes)
+    // fecha puede ser date-only "YYYY-MM-DD" → parseamos al mediodía para evitar timezone issues
+    const ingParseDate = i => {
+      const s = i.confirmadoEn || i.fecha || '';
+      return s.includes('T') ? new Date(s) : new Date(s + 'T12:00:00');
+    };
     const allIngresos = DB.getIngresos().filter(i => i.estado === 'confirmado');
     const ingFilt     = allIngresos.filter(i => {
-      const d = new Date(i.confirmedAt || i.fecha);
+      const d = ingParseDate(i);
       return d >= desde && d <= hasta;
     });
     const totalCompras = ingFilt.reduce((s, i) => s + (i.items || []).reduce((a, x) => a + (x.precioUnitario || 0) * x.cantidad, 0), 0);
@@ -2873,6 +2882,29 @@
               ${coverageText ? `<p style="font-size:12px;color:var(--text-muted);margin:0 0 10px">${coverageText}</p>` : ''}
               ${porProvHTML}
             </section>
+            <section class="section">
+              <h3 class="section__title">Historial de turnos</h3>
+              ${filtered.length
+                ? filtered.slice(0, 20).map(inf => {
+                    const turnoIcon = inf.turno === 'mediodia' ? '☀️' : '🌙';
+                    const turnoNom  = inf.turno === 'mediodia' ? 'Mediodía' : 'Noche';
+                    const totalBot  = inf.items.reduce((s, i) => s + i.cantidad, 0);
+                    const factVal   = inf.items.reduce((s, item) => s + ((item.vinoPrecio != null ? item.vinoPrecio : (DB.getWineById(item.vinoId)?.precio_carta || 0)) * item.cantidad), 0);
+                    return `<button class="informe-card" data-id="${inf.id}">
+                      <div class="informe-card__left">
+                        <div class="informe-card__fecha">${new Date(inf.fecha).toLocaleDateString('es-AR',{weekday:'short',day:'2-digit',month:'2-digit'})}</div>
+                        <div class="informe-card__turno">${turnoIcon} ${turnoNom}</div>
+                        <div style="font-size:11px;color:var(--text-muted)">${inf.confirmedByNombre || inf.usuarioNombre || ''}</div>
+                      </div>
+                      <div class="informe-card__right">
+                        <div class="informe-card__total">${totalBot} bot.</div>
+                        ${factVal > 0 ? `<div style="font-size:12px;font-weight:600;color:var(--gold-light)">${fmtCurrency(factVal)}</div>` : ''}
+                      </div>
+                    </button>`;
+                  }).join('') +
+                  (filtered.length > 20 ? `<div style="text-align:center;font-size:12px;color:var(--text-muted);padding:8px">… y ${filtered.length-20} turnos más en este período</div>` : '')
+                : `<p class="report-empty">Sin turnos en este período</p>`}
+            </section>
             ` : `
 
             <!-- TAB COMPRAS -->
@@ -2918,17 +2950,22 @@
 
             ${ingFilt.length ? `
             <section class="section">
-              <h3 class="section__title">Últimos ingresos</h3>
-              ${ingFilt.slice().sort((a,b)=>new Date(b.confirmedAt||b.fecha)-new Date(a.confirmedAt||a.fecha)).slice(0,10).map(i => {
+              <h3 class="section__title">Detalle de ingresos</h3>
+              ${ingFilt.slice().sort((a,b)=>ingParseDate(b)-ingParseDate(a)).slice(0,15).map(i => {
                 const p = proveedores.find(p=>p.id===i.proveedorId);
                 const total = (i.items||[]).reduce((a,x)=>a+(x.precioUnitario||0)*x.cantidad,0);
-                return `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--surface-3)">
-                  <div>
-                    <div style="font-size:13px;font-weight:600">${p ? escHtml(p.nombre_fantasia||p.nombre) : 'Sin proveedor'}</div>
-                    <div style="font-size:11px;color:var(--text-muted)">${fmtDate(i.confirmedAt||i.fecha)} · ${(i.items||[]).reduce((a,x)=>a+x.cantidad,0)} bot.</div>
+                const fecha = ingParseDate(i);
+                return `<button class="informe-card" data-ingreso-id="${i.id}">
+                  <div class="informe-card__left">
+                    <div class="informe-card__fecha">${fecha.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'2-digit'})}</div>
+                    <div class="informe-card__turno">📦 ${p ? escHtml(p.nombre_fantasia||p.nombre) : 'Sin proveedor'}</div>
+                    ${i.nroFactura ? `<div style="font-size:11px;color:var(--text-muted)">Factura Nº ${escHtml(i.nroFactura)}</div>` : ''}
                   </div>
-                  <div style="font-size:13px;font-weight:700;color:var(--gold)">${fmtCurrency(total)}</div>
-                </div>`;
+                  <div class="informe-card__right">
+                    <div class="informe-card__total">${(i.items||[]).reduce((a,x)=>a+x.cantidad,0)} bot.</div>
+                    <div style="font-size:12px;font-weight:700;color:var(--gold)">${fmtCurrency(total)}</div>
+                  </div>
+                </button>`;
               }).join('')}
             </section>` : ''}
             `}
@@ -2939,6 +2976,12 @@
         document.getElementById('btn-back').onclick = () => Router.back();
         document.getElementById('tab-ventas').onclick  = () => { Router.params.rTab = 'ventas';  App.render(); };
         document.getElementById('tab-compras').onclick = () => { Router.params.rTab = 'compras'; App.render(); };
+        document.querySelectorAll('[data-ingreso-id]').forEach(btn => {
+          btn.onclick = () => Router.go('ingreso-detail', { ingresoId: btn.dataset.ingresoId });
+        });
+        document.querySelectorAll('.informe-card[data-id]').forEach(btn => {
+          btn.onclick = () => Router.go('informe-detail', { informeId: btn.dataset.id });
+        });
 
         document.querySelectorAll('[data-p]').forEach(c => {
           c.onclick = () => { Router.params.rPeriodo = c.dataset.p; App.render(); };
